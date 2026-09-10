@@ -35,10 +35,25 @@ The agent knows how to do the second one. It just doesn't, unless something stop
 |---|---|---|---|---|
 | Haiku 4.5 | 558,726 | 817,065 | **+46.2% without** | 50/50 both ways |
 | Sonnet | 493,503 | 603,494 | **+22.3% without** | 50/50 both ways |
+| Opus | 398,611 | 407,423 | **+2.2% — noise** | 50/50 both ways |
 
 **Not one wrong answer, either way.** squint made it cheaper, never worse.
 
 On Haiku it helped in **10 groups out of 10** — no exceptions. Its cost: about three extra tool calls per ten questions.
+
+### The stronger the model, the less this matters
+
+That third row is the one to read carefully. **On Opus, squint fired zero times.** Not "rarely" — never. Across 50 questions and 10 agents, Opus did not open a single whole file. It went straight to Grep every time, so the hook had nothing to block. The +2.2% is one noisy group, not an effect.
+
+| model | groups where squint changed the outcome | times it fired |
+|---|---|---|
+| Haiku 4.5 | 10 / 10 | every group |
+| Sonnet | 2 / 10 | 7 blocks, 2 insisted |
+| Opus | 1 / 10 (noise) | **0** |
+
+And notice which model spent the least in total: **Opus, at 398,611 tokens — 29% below Haiku.** The expensive model was the cheapest at the task, because it did not waste a step. Model choice beats this hook, and beats it by a lot.
+
+**So: install squint if you drive small models, or spawn Haiku subagents for mechanical work. If everything you run is Opus, it will sit there and never fire.** That is a strange thing to put in a README. It is also true, and you would have found out in a week.
 
 ### Telling the agent doesn't work. Stopping it does.
 
@@ -74,6 +89,8 @@ Eight tasks tied, one was worse with squint, one was better. The one real loss: 
 **Subagents are dominated by fixed cost, not reading.** A Sonnet subagent that does *nothing at all* — zero tools, replies "OK" — already costs **43,586 tokens**. Haiku: **29,584**. In the Sonnet benchmark, 88% of every run was that toll. If you spawn a lot of subagents, spawning fewer and bigger ones will save you more than squint ever will.
 
 **Claude Code already blocks exact duplicate re-reads** natively. squint is about the first read, not the second.
+
+**Not tested:** effort/thinking levels. Every run above used default settings. It is plausible that raising an agent's reasoning budget makes it pick Grep on its own — which would be a cheaper lever than a hook. Nobody has measured it, including me.
 
 ---
 
