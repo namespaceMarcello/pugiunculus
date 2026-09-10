@@ -118,7 +118,19 @@ Eight tasks tied, one was worse with squint, one was better. The one real loss: 
 
 **Strong models need it less.** Sonnet already reads well: squint changed the outcome in only 2 groups out of 10. But in those two it saved ~70,000 tokens each. Sonnet also *insisted* (asked twice and got the file) 2 times out of 9 blocks. Haiku never did — the escape hatch is used by the models that know when they need it.
 
-**Subagents are dominated by fixed cost, not reading.** A Sonnet subagent that does *nothing at all* — zero tools, replies "OK" — already costs **43,586 tokens**. Haiku: **29,584**. In the Sonnet benchmark, 88% of every run was that toll. If you spawn a lot of subagents, spawning fewer and bigger ones will save you more than squint ever will.
+**Batching subagents saves twice what squint does.** A Haiku subagent that does *nothing at all* — zero tools, replies "OK" — already costs **29,584 tokens**. Sonnet: **43,586**. That is a meter drop you pay before any work happens, and in the Sonnet benchmark it was 88% of every run.
+
+So the same 50 questions were re-run split three ways, squint on in all of them:
+
+| shape | tokens | vs. baseline | correct |
+|---|---|---|---|
+| 10 agents × 5 questions | 558,726 | — | 50/50 |
+| 5 agents × 10 questions | 314,239 | **−44%** | 50/50 |
+| 2 agents × 25 questions | **204,398** | **−63%** | 50/50 |
+
+Same questions, same answers, same hook. **Fewer, bigger agents cut 63% — roughly double squint's 32% on the same model — and it costs nothing to do.** If you fan work out across many small subagents, fix that before you install anything.
+
+The two stack: squint trims what each agent reads, batching cuts how many meters you start.
 
 **Claude Code already blocks exact duplicate re-reads** natively. squint is about the first read, not the second.
 
