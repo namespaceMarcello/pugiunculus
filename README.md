@@ -5,7 +5,7 @@
 squint is one hook. It stops the first whole-file `Read` of a large file and tells the agent what it costs. If the agent really needs the whole file, it asks again and gets it.
 
 ```bash
-git clone https://github.com/YOUR-NAME/squint && node squint/install.cjs
+git clone https://github.com/namespaceMarcello/squint && node squint/install.cjs
 ```
 
 No restart. No API key. Nothing leaves your machine.
