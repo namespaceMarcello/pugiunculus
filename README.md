@@ -2,7 +2,12 @@
 
 **Your coding agent opens a 21,000-token file to read ten lines. Then carries it for the rest of the session.**
 
-squint is one hook. It stops the first whole-file `Read` of a large file and tells the agent what it costs. If the agent really needs the whole file, it asks again and gets it.
+squint is two hooks that stop the two biggest ways a coding agent burns tokens on nothing:
+
+- **opening a whole file** to read ten lines — 21,163 tokens where 614 would do
+- **spawning ten small subagents** where two would do — each one pays ~30,000 tokens before it does any work
+
+Both refuse once and explain the cost. If the agent really needs it, it asks again and gets it.
 
 ```bash
 git clone https://github.com/namespaceMarcello/squint && node squint/install.cjs
@@ -46,6 +51,22 @@ The agent knows how to do the second one. It just doesn't, unless something stop
 ```
 
 One refusal, two targeted calls, same answer. The agent needed no instruction beyond the refusal itself — and if it had actually needed all 1,822 lines, repeating the Read would have handed them over.
+
+## The other thing it stops
+
+A Haiku subagent that does *nothing at all* — zero tools, replies "OK" — already costs **29,584 tokens**. Sonnet: **43,586**. That is a meter drop, paid before any work happens, once per agent you spawn.
+
+The same 50 questions, split three ways:
+
+| shape | tokens | vs. baseline | correct |
+|---|---|---|---|
+| 10 agents × 5 questions | 558,726 | — | 50/50 |
+| 5 agents × 10 questions | 314,239 | **−44%** | 50/50 |
+| 2 agents × 25 questions | **204,398** | **−63%** | 50/50 |
+
+Same questions, same answers. **Fewer, bigger agents cut 63%** — roughly double what the read block saves on the same model.
+
+**Where the second hook fires, and why there.** Not mid-batch: refusing the last seven of a ten-agent fan-out leaves three orphans and a mess. It waits for the batch to end, then blocks the *first spawn of the next one*, carrying the evidence with it — *"your last batch was 10 subagents with a median prompt of 480 characters, about 300,000 tokens on meter drops alone."* Consequence, stated plainly: the first fan-out of a session is never blocked. There is nothing to learn from yet.
 
 ---
 
@@ -118,19 +139,7 @@ Eight tasks tied, one was worse with squint, one was better. The one real loss: 
 
 **Strong models need it less.** Sonnet already reads well: squint changed the outcome in only 2 groups out of 10. But in those two it saved ~70,000 tokens each. Sonnet also *insisted* (asked twice and got the file) 2 times out of 9 blocks. Haiku never did — the escape hatch is used by the models that know when they need it.
 
-**Batching subagents saves twice what squint does.** A Haiku subagent that does *nothing at all* — zero tools, replies "OK" — already costs **29,584 tokens**. Sonnet: **43,586**. That is a meter drop you pay before any work happens, and in the Sonnet benchmark it was 88% of every run.
-
-So the same 50 questions were re-run split three ways, squint on in all of them:
-
-| shape | tokens | vs. baseline | correct |
-|---|---|---|---|
-| 10 agents × 5 questions | 558,726 | — | 50/50 |
-| 5 agents × 10 questions | 314,239 | **−44%** | 50/50 |
-| 2 agents × 25 questions | **204,398** | **−63%** | 50/50 |
-
-Same questions, same answers, same hook. **Fewer, bigger agents cut 63% — roughly double squint's 32% on the same model — and it costs nothing to do.** If you fan work out across many small subagents, fix that before you install anything.
-
-The two stack: squint trims what each agent reads, batching cuts how many meters you start.
+**Model choice beats both hooks.** Neither hook can see that you picked an expensive model for mechanical work — that decision is already made by the time a tool call exists. Haiku with squint answered all 50 questions for $0.56; Opus, needing neither hook, cost $1.99 for the same answers. No hook can fix that for you.
 
 **Claude Code already blocks exact duplicate re-reads** natively. squint is about the first read, not the second.
 
@@ -205,7 +214,7 @@ Why 8 KB: swept 4 / 8 / 16 / 32 / 64 KB over 607 real sessions. 8 KB keeps 91% o
 
 ## What this is not
 
-It is not a framework, a memory layer, or a context manager. It is one hook, under 150 lines, that stops one specific waste — and a measurement tool so you can check whether it stopped anything on *your* machine.
+It is not a framework, a memory layer, or a context manager. It is two hooks, under 300 lines together, that stop two specific wastes — and a measurement tool so you can check whether they stopped anything on *your* machine.
 
 If the number doesn't move for you, uninstall it. That's what the measurement is for.
 
