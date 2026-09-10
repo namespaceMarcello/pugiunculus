@@ -1,0 +1,138 @@
+# squint
+
+**Your coding agent opens a 21,000-token file to read ten lines. Then carries it for the rest of the session.**
+
+squint is one hook. It stops the first whole-file `Read` of a large file and tells the agent what it costs. If the agent really needs the whole file, it asks again and gets it.
+
+```bash
+git clone https://github.com/YOUR-NAME/squint && node squint/install.cjs
+```
+
+No restart. No API key. Nothing leaves your machine.
+
+---
+
+## The thing it stops
+
+A real question on a real 84 KB source file — *"where is the click handled?"*
+
+| | tokens |
+|---|---|
+| open the whole file | **21,163** |
+| `Grep` for the symbol, then `Read` 30 lines around it | **614** |
+
+Same answer. **34× cheaper.** And the 21,000 tokens don't stay in the context competing with everything else for the rest of the session.
+
+The agent knows how to do the second one. It just doesn't, unless something stops it.
+
+---
+
+## Does it actually work?
+
+50 questions about a 40,000-line TypeScript codebase, each requiring one exact value from a large file. Every question asked twice — once with squint, once without — to fresh subagents that had no idea they were in an experiment. 100 runs.
+
+| model | with squint | without | difference | correct answers |
+|---|---|---|---|---|
+| Haiku 4.5 | 558,726 | 817,065 | **+46.2% without** | 50/50 both ways |
+| Sonnet | 493,503 | 603,494 | **+22.3% without** | 50/50 both ways |
+
+**Not one wrong answer, either way.** squint made it cheaper, never worse.
+
+On Haiku it helped in **10 groups out of 10** — no exceptions. Its cost: about three extra tool calls per ten questions.
+
+### Telling the agent doesn't work. Stopping it does.
+
+Same 50 questions, squint **off** in both arms. One arm got a line at the top of the prompt: *"you read whole files 19% of the time; a targeted read costs about 30× less."*
+
+| | tokens | how often it worked |
+|---|---|---|
+| nothing | 817,065 | — |
+| **telling it** | 667,805 (−18.3%) | **3 times out of 10** |
+| **stopping it** | 558,726 (−31.6%) | **10 times out of 10** |
+
+The seven groups that ignored the warning ignored it completely — within ±200 tokens of the arm that was never told anything. Not "partly followed". Ignored.
+
+If you have been writing rules into `CLAUDE.md` and wondering why nothing changes: this is why.
+
+---
+
+## Where it does *not* help
+
+This section exists because the benchmark that only shows wins is not a benchmark.
+
+**Tasks that genuinely need the whole file.** 10 "list every exported function in this file" tasks, scored on how many items were actually found:
+
+| | with squint | without |
+|---|---|---|
+| recall | **97.9%** | **99.5%** |
+| tokens | 326,932 | 620,978 |
+
+Eight tasks tied, one was worse with squint, one was better. The one real loss: 9 of 13 constants found instead of 13 of 13. squint doesn't hide anything — it shifts the work onto the agent's ability to search, and a small model searches imperfectly.
+
+**Strong models need it less.** Sonnet already reads well: squint changed the outcome in only 2 groups out of 10. But in those two it saved ~70,000 tokens each. Sonnet also *insisted* (asked twice and got the file) 2 times out of 9 blocks. Haiku never did — the escape hatch is used by the models that know when they need it.
+
+**Subagents are dominated by fixed cost, not reading.** A Sonnet subagent that does *nothing at all* — zero tools, replies "OK" — already costs **43,586 tokens**. Haiku: **29,584**. In the Sonnet benchmark, 88% of every run was that toll. If you spawn a lot of subagents, spawning fewer and bigger ones will save you more than squint ever will.
+
+**Claude Code already blocks exact duplicate re-reads** natively. squint is about the first read, not the second.
+
+---
+
+## Measure your own history before you install
+
+squint ships with the tool that produced these numbers. Point it at your own logs:
+
+```bash
+node measure.cjs
+```
+
+It replays your entire Claude Code history and tells you how many whole-file reads squint would have blocked, how many tokens were at stake, and — the part most tools skip — **how often it would have got in your way**: blocks per session, median and worst case.
+
+```bash
+node measure.cjs --sweep     # compare 4 / 8 / 16 / 32 / 64 KB thresholds
+```
+
+Nothing is uploaded. No API calls. It reads `~/.claude/projects` and prints numbers.
+
+On the 607-session history this was built from: 734 reads would have been blocked, 3.5M tokens at stake, median 2 blocks per session, worst case 15.
+
+**The trade, in one line:** a blocked read is worth ~4,800 tokens. A pointless block costs ~85 (the refusal, then you read it anyway). squint pays for itself if it is right **more than 1.9% of the time**.
+
+---
+
+## How the benchmark was run
+
+Reproducible, because a number you can't reproduce is a marketing claim.
+
+- **Subjects:** fresh subagents, one arm at a time, identical prompts. They were not told an experiment was happening.
+- **Questions:** generated by script from the codebase (`const NAME = <literal>` in files over 12 KB, unique name across the project), with the correct answers extracted from source — never written by hand, never graded by judgement.
+- **Control:** `SQUINT_OFF=1` disables the block while still logging every decision, so the control group's behaviour is counted, not assumed.
+- **Scoring:** exact string match against the extracted answers, quoting normalised.
+- **Everything logged:** `~/.claude/squint/log.jsonl` records every decision — `slice`, `small`, `blocked`, `insisted`, `off` — so you can tell whether behaviour changed, not just whether the bill did.
+
+---
+
+## Config
+
+| | |
+|---|---|
+| `SQUINT_THRESHOLD_BYTES` | when to start blocking (default `8000`) |
+| `SQUINT_OFF=1` | disable the block, keep the log — for your own A/B |
+| `SQUINT_LOG=0` | turn the log off entirely |
+
+```bash
+node install.cjs --uninstall
+```
+
+Your `settings.json` is backed up to `settings.json.backup-squint` before anything is written.
+
+Why 8 KB: swept 4 / 8 / 16 / 32 / 64 KB over 607 real sessions. 8 KB keeps 91% of the tokens at stake with 26% fewer blocks than 4 KB. Above 64 KB nothing fires at all, because `Read` truncates its own results around 16k tokens.
+
+---
+
+## What this is not
+
+It is not a framework, a memory layer, or a context manager. It is one hook, about 130 lines, that stops one specific waste — and a measurement tool so you can check whether it stopped anything on *your* machine.
+
+If the number doesn't move for you, uninstall it. That's what the measurement is for.
+
+MIT.

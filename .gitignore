@@ -1,0 +1,4 @@
+node_modules/
+*.log
+*.backup-*
+out.json
