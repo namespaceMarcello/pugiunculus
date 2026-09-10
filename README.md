@@ -117,6 +117,7 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 |---|---|
 | `SQUINT_THRESHOLD_BYTES` | when to start blocking (default `8000`) |
 | `SQUINT_OFF=1` | disable the block, keep the log — for your own A/B |
+| `~/.claude/squint/OFF` | same, as a file — subagents do not inherit your shell, so this is the one that gives you a real control group |
 | `SQUINT_LOG=0` | turn the log off entirely |
 
 ```bash

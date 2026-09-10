@@ -14,6 +14,9 @@
  *   SQUINT_LOG               default "1"   — "0" disables the decision log
  *   SQUINT_OFF               default unset — set to "1" to disable (for A/B tests)
  *
+ * A file at ~/.claude/squint/OFF disables it too. Use that one when you want a
+ * control group across subagents, which do not inherit your shell environment.
+ *
  * The log lives at ~/.claude/squint/log.jsonl and records every decision,
  * including when squint is off. That is how you measure whether it helps.
  */
@@ -28,6 +31,7 @@ const HOME = os.homedir()
 const DIR = path.join(HOME, '.claude', 'squint')
 const LOG = path.join(DIR, 'log.jsonl')
 const STATE = path.join(os.tmpdir(), 'squint-state')
+const OFF_SWITCH = path.join(DIR, 'OFF')
 
 /** Files that cannot meaningfully be read in slices. */
 const OPAQUE = new Set([
@@ -93,7 +97,10 @@ function run(ev) {
   }
 
   // Disabled: still record, so a control group can be measured.
-  if (process.env.SQUINT_OFF === '1') {
+  // Two ways to switch it off — the env var for a single run, the file for a
+  // whole batch. The file matters because subagents do not inherit your shell:
+  // it is the only way to run a real control group across spawned agents.
+  if (process.env.SQUINT_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
     note({ ...base, decision: 'off', bytes: stat.size })
     return
   }
