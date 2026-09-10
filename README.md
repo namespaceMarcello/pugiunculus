@@ -90,7 +90,19 @@ Eight tasks tied, one was worse with squint, one was better. The one real loss: 
 
 **Claude Code already blocks exact duplicate re-reads** natively. squint is about the first read, not the second.
 
-**Not tested:** effort/thinking levels. Every run above used default settings. It is plausible that raising an agent's reasoning budget makes it pick Grep on its own — which would be a cheaper lever than a hook. Nobody has measured it, including me.
+**Effort levels change nothing here.** The obvious cheaper lever would be to raise the agent's reasoning budget and hope it picks Grep on its own. Tested: 20 more Haiku runs with squint off, `effortLevel` set to `low` for one batch and `xhigh` for the other.
+
+| | tokens | whole-file reads | correct |
+|---|---|---|---|
+| default | 817,065 | 41 | 50/50 |
+| effort `low` | 817,093 | 41 | 50/50 |
+| effort `xhigh` | 816,980 | 41 | 50/50 |
+
+Three configurations, 113 tokens apart, and **the same 41 whole-file reads every time**.
+
+A caveat worth stating plainly: results that identical are suspicious. Real behavioural variance is larger — elsewhere in this benchmark the same prompt ranged from 46k to 117k tokens. So the likely explanation is that per-model `effortLevel` never reached the spawned agents at all, not that reasoning budget is irrelevant. Claude Code wrote empty transcripts for those subagents, so thinking-token usage could not settle it.
+
+Either way the practical answer is the same: **turning that dial did not stop a single whole-file read.**
 
 ---
 
