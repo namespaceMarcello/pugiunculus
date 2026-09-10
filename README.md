@@ -25,6 +25,28 @@ Same answer. **34× cheaper.** And the 21,000 tokens don't stay in the context c
 
 The agent knows how to do the second one. It just doesn't, unless something stops it.
 
+### What it looks like
+
+```
+> where is the click handled in boot.ts?
+
+  Read(src/iso/boot.ts)
+  ✗ Whole-file Read blocked: ~21163 tokens for one file. Find the line
+    with Grep first, then Read with offset/limit around it. If you
+    genuinely need the entire file, repeat this exact Read and it will
+    go through.
+
+  Grep(pattern: "click", path: "src/iso/boot.ts")
+  ✓ 8 matches                                              164 tokens
+
+  Read(src/iso/boot.ts, offset: 405, limit: 30)
+  ✓ 30 lines                                               450 tokens
+
+  statoCursore() at line 409 decides when the cursor lights up.
+```
+
+One refusal, two targeted calls, same answer. The agent needed no instruction beyond the refusal itself — and if it had actually needed all 1,822 lines, repeating the Read would have handed them over.
+
 ---
 
 ## Does it actually work?
@@ -171,7 +193,7 @@ Why 8 KB: swept 4 / 8 / 16 / 32 / 64 KB over 607 real sessions. 8 KB keeps 91% o
 
 ## What this is not
 
-It is not a framework, a memory layer, or a context manager. It is one hook, about 130 lines, that stops one specific waste — and a measurement tool so you can check whether it stopped anything on *your* machine.
+It is not a framework, a memory layer, or a context manager. It is one hook, under 150 lines, that stops one specific waste — and a measurement tool so you can check whether it stopped anything on *your* machine.
 
 If the number doesn't move for you, uninstall it. That's what the measurement is for.
 
