@@ -51,9 +51,19 @@ That third row is the one to read carefully. **On Opus, squint fired zero times.
 | Sonnet | 2 / 10 | 7 blocks, 2 insisted |
 | Opus | 1 / 10 (noise) | **0** |
 
-And notice which model spent the least in total: **Opus, at 398,611 tokens — 29% below Haiku.** The expensive model was the cheapest at the task, because it did not waste a step. Model choice beats this hook, and beats it by a lot.
+Opus spent the fewest tokens of the three — 398,611, 29% below Haiku. **Tokens are not the bill, though.** At list prices ($1/MTok for Haiku 4.5, $2 for Sonnet 5, $5 for Opus 5) the same 50 questions cost:
 
-**So: install squint if you drive small models, or spawn Haiku subagents for mechanical work. If everything you run is Opus, it will sit there and never fire.** That is a strange thing to put in a README. It is also true, and you would have found out in a week.
+| model | with squint | without | squint saves |
+|---|---|---|---|
+| Haiku 4.5 | **$0.56** | $0.82 | **32%** |
+| Sonnet 5 | $0.99 | $1.21 | 18% |
+| Opus 5 | $1.99 | $2.04 | 2% |
+
+*(Approximate: the harness reports one total per agent, not an input/output/cache split. Output was five lines per run, so almost all of it is input, priced at the input rate.)*
+
+So the ranking flips when you count money instead of tokens. **Haiku with squint was the cheapest way to get all 50 answers right — 3.6× cheaper than Opus, at identical accuracy.** Opus is more efficient per task and still costs far more per task.
+
+**Which is the case for squint, not against it.** The cheap model is the one you run in bulk, it is the one that opens whole files, and it is where squint saves the most: a third of the bill. On Opus it saves 2% and never fires — so if every agent you run is Opus, do not install this.
 
 ### Telling the agent doesn't work. Stopping it does.
 
