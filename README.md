@@ -54,7 +54,9 @@ One refusal, two targeted calls, same answer. The agent needed no instruction be
 
 ## The other thing it stops
 
-A Haiku subagent that does *nothing at all* — zero tools, replies "OK" — already costs **29,584 tokens**. Sonnet: **43,586**. That is a meter drop, paid before any work happens, once per agent you spawn.
+A Haiku subagent that does *nothing at all* — zero tools, replies "OK" — already cost **29,584 tokens** on the machine this was built on. Sonnet: **43,586**. That is an entry fee, paid before any work happens, once per agent you spawn.
+
+**That number is not a constant, and squint does not pretend it is.** It is the sum of your system prompt, every tool schema, your skill list and your CLAUDE.md — so it depends on your plugins and MCP servers, not on ours. `node measure.cjs` derives yours from your own logs (the cheapest subagent you have ever run) and the hook quotes *that* back at you when it blocks. Until you run it, the refusal says so instead of inventing a figure.
 
 The same 50 questions, split three ways:
 

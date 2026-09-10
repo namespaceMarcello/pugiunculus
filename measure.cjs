@@ -89,6 +89,32 @@ function collect(file) {
   })
 }
 
+/**
+ * The entry cost of one subagent, measured from your own logs.
+ *
+ * Every spawned agent pays a fixed toll before it does any work: system
+ * prompt, tool schemas, skill list, your CLAUDE.md. It depends entirely on
+ * your setup - plugins, MCP servers, project instructions - so it cannot be
+ * a constant baked into a tool. The floor is the smallest total any subagent
+ * of yours has ever reported: an agent that did essentially nothing.
+ */
+function measureToll() {
+  const values = []
+  for (const file of walk(ROOT)) {
+    let text
+    try {
+      text = fs.readFileSync(file, "utf8")
+    } catch {
+      continue
+    }
+    if (text.indexOf("subagent_tokens") < 0) continue
+    for (const hit of text.matchAll(/subagent_tokens>(\d+)</g)) values.push(Number(hit[1]))
+  }
+  if (!values.length) return null
+  values.sort((a, b) => a - b)
+  return { toll: values[0], samples: values.length, median: values[Math.floor(values.length / 2)] }
+}
+
 function simulate(thresholdTokens) {
   let blocked = 0
   let tokensAtStake = 0
@@ -186,6 +212,21 @@ function simulate(thresholdTokens) {
       console.log('  => squint pays for itself if it is right more than ' + breakeven + '% of the time')
     }
     console.log('')
+    const t = measureToll()
+    if (t) {
+      const dir = path.join(os.homedir(), '.claude', 'squint')
+      try {
+        fs.mkdirSync(dir, { recursive: true })
+        fs.writeFileSync(path.join(dir, 'toll.json'), JSON.stringify({ toll: t.toll, samples: t.samples, measuredAt: new Date().toISOString() }, null, 2))
+      } catch {}
+      console.log('')
+      console.log('YOUR SUBAGENT ENTRY COST')
+      console.log('  cheapest agent you ever ran   ' + t.toll.toLocaleString('en-US') + ' tokens')
+      console.log('  typical agent                 ' + t.median.toLocaleString('en-US') + ' tokens   (' + t.samples + ' samples)')
+      console.log('  => every extra agent costs at least that much before doing anything.')
+      console.log('     This number is yours, not a constant: it depends on your plugins,')
+      console.log('     MCP servers and CLAUDE.md. squint quotes it back to you when it blocks.')
+    }
     console.log('Run with --sweep to tune the threshold to your own habits.')
   }
 

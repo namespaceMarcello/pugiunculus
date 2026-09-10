@@ -139,6 +139,15 @@ function run(ev) {
     return
   }
 
+  // The entry cost is the installing user's, not a constant. `node measure.cjs`
+  // derives it from their own logs and leaves it here.
+  let toll = null
+  try {
+    toll = JSON.parse(fs.readFileSync(path.join(DIR, 'toll.json'), 'utf8')).toll
+  } catch {
+    /* not measured yet — the message says so instead of inventing a number */
+  }
+
   save({ blockedFor: previous.length })
   const n = previous.length
   const med = median(previous.map((s) => s.len))
@@ -149,8 +158,10 @@ function run(ev) {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
       permissionDecisionReason:
-        `Fan-out blocked once. Your last batch was ${n} subagents with a median prompt of ${med} characters — ` +
-        `each one pays roughly 30,000 tokens before it does any work, so that batch spent about ${(n * 30000).toLocaleString('en-US')} tokens on meter drops alone. ` +
+        `Fan-out blocked once. Your last batch was ${n} subagents with a median prompt of ${med} characters. ` +
+        (toll
+          ? `On this machine the cheapest subagent you have ever run cost ${toll.toLocaleString('en-US')} tokens before doing any work, so that batch spent at least ${(n * toll).toLocaleString('en-US')} tokens on entry costs alone. `
+          : `Every agent pays a fixed entry cost before doing any work — tens of thousands of tokens, depending on your plugins and MCP servers. Run \`node measure.cjs\` to measure yours. `) +
         `Combining the same work into fewer, larger agents measured 63% cheaper at identical accuracy. ` +
         `Put several tasks in each agent's prompt instead. If they genuinely need separate contexts, repeat this call and it will go through.`,
     },
