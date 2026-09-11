@@ -13,6 +13,7 @@
  *   SQUINT_THRESHOLD_BYTES   default 8000  — below this, whole reads are fine
  *   SQUINT_LOG               default "1"   — "0" disables the decision log
  *   SQUINT_OFF               default unset — set to "1" to disable (for A/B tests)
+ *   SQUINT_READ_OFF          default unset — "1" disables only this hook
  *
  * A file at ~/.claude/squint/OFF disables it too. Use that one when you want a
  * control group across subagents, which do not inherit your shell environment.
@@ -100,7 +101,7 @@ function run(ev) {
   // Two ways to switch it off — the env var for a single run, the file for a
   // whole batch. The file matters because subagents do not inherit your shell:
   // it is the only way to run a real control group across spawned agents.
-  if (process.env.SQUINT_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
+  if (process.env.SQUINT_OFF === '1' || process.env.SQUINT_READ_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
     note({ ...base, decision: 'off', bytes: stat.size })
     return
   }
@@ -137,7 +138,7 @@ function run(ev) {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
       permissionDecisionReason:
-        `Whole-file Read blocked: ~${tokens} tokens for one file. ` +
+        `Whole-file Read blocked: up to ~${tokens} tokens for one file. ` +
         `Find the line with Grep first, then Read with offset/limit around it. ` +
         `If you genuinely need the entire file, repeat this exact Read and it will go through.`,
     },

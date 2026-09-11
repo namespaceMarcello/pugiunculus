@@ -1,14 +1,14 @@
 # squint
 
-**Your coding agent opens a 21,000-token file to read ten lines. Then carries it for the rest of the session.**
+**Your coding agent opens an 84 KB file to read ten lines. Then carries 12,000 tokens of it for the rest of the session.**
 
 squint is three hooks that stop the ways a coding agent burns tokens on nothing:
 
-- **opening a whole file** to read ten lines — 21,163 tokens where 614 would do
+- **opening a whole file** to read ten lines — 11,747 tokens where 614 would do
 - **`cat BIG` instead** — the same waste through the shell, which is where most of it actually happens
 - **spawning ten small subagents** where two would do — each pays a fixed entry cost before doing any work
 
-Each refuses once and explains the cost. If the agent really needs it, it asks again and gets it.
+Each refuses once and explains the cost. If the agent really needs it, it asks again and gets it. The first two are measured to pay off. The third, as shipped, is measured *not* to change what the model does — its section says so, with numbers.
 
 ```bash
 git clone https://github.com/namespaceMarcello/squint && node squint/install.cjs
@@ -24,10 +24,12 @@ A real question on a real 84 KB source file — *"where is the click handled?"*
 
 | | tokens |
 |---|---|
-| open the whole file | **21,163** |
+| open the whole file | **11,747** |
 | `Grep` for the symbol, then `Read` 30 lines around it | **614** |
 
-Same answer. **34× cheaper.** And the 21,000 tokens don't stay in the context competing with everything else for the rest of the session.
+Same answer. **19× cheaper.** And the 12,000 tokens don't stay in the context competing with everything else for the rest of the session.
+
+The 11,747 is what the transcript shows the agent actually received, not the file's size. The file is 84,652 bytes — about 21,000 tokens — but `Read` stops at roughly 47,000 characters, so the "whole file" was 973 of its 1,822 lines. The refusal below quotes the size-based figure as an upper bound; every number in this README is the measured one.
 
 The agent knows how to do the second one. It just doesn't, unless something stops it.
 
@@ -37,8 +39,8 @@ The agent knows how to do the second one. It just doesn't, unless something stop
 > where is the click handled in boot.ts?
 
   Read(src/iso/boot.ts)
-  ✗ Whole-file Read blocked: ~21163 tokens for one file. Find the line
-    with Grep first, then Read with offset/limit around it. If you
+  ✗ Whole-file Read blocked: up to ~21163 tokens for one file. Find the
+    line with Grep first, then Read with offset/limit around it. If you
     genuinely need the entire file, repeat this exact Read and it will
     go through.
 
@@ -51,13 +53,17 @@ The agent knows how to do the second one. It just doesn't, unless something stop
   statoCursore() at line 409 decides when the cursor lights up.
 ```
 
-One refusal, two targeted calls, same answer. The agent needed no instruction beyond the refusal itself — and if it had actually needed all 1,822 lines, repeating the Read would have handed them over.
+One refusal, two targeted calls, same answer. The agent needed no instruction beyond the refusal itself — and if it had actually needed the file, repeating the Read would have gone through.
 
 ## The back door
 
 Blocking `Read` does nothing about `cat file`, which puts the same tokens in the same context through the shell. In the logs this was built from, **Bash out-consumed Read** — 7.08M tokens against 5.85M — with `cat` alone at 693 calls and 1.5M, and wide `sed -n` ranges another 1.6M.
 
-The third hook closes it: `cat BIG`, `type BIG`, `Get-Content BIG`, `head -n 5000 BIG`, `sed -n '1,4000p' BIG`. It is deliberately conservative — a pipe or redirect (`cat x | grep y`) is allowed, because that output was never going to be large, and a narrow `sed -n '100,140p'` is exactly the behaviour we want.
+The third hook closes it: `cat BIG`, `type BIG`, `Get-Content BIG`, `nl` / `tac` / `less BIG`, `head -n 5000 BIG`, `head -c 100000 BIG`, `tail -n +1 BIG`, `sed -n '1,4000p' BIG`, `sed -n '1,$p' BIG` — and every command of a chain, so `cd src && cat BIG` is still `cat BIG`. It is deliberately conservative: a pipe or a redirect of stdout (`cat x | grep y`) is allowed because that output was never going to be large, and a narrow slice (`sed -n '100,140p'`, `head -n 40`, `Get-Content x -Tail 40`) is exactly the behaviour we want.
+
+It is a list of the shapes that showed up in real logs, not a fence. `awk '{print}'`, `grep '' file` and `python -c` go straight through, on purpose: an agent that reaches for those after a refusal has decided it needs the file.
+
+Two things to know before installing it. The shell tool cuts its output at about 30,000 characters, so one `cat` can cost at most ~7,500 tokens, and in the logs above the average `cat` was worth about 2,200 — against ~4,800 for a blocked `Read`. The back door is wider, but each pass through it is cheaper: expect more blocks here, each saving less.
 
 > If you already run something that compresses shell output (rtk, headroom, …), your `cat` may be cheap already. Measure before installing this one.
 
@@ -75,9 +81,26 @@ The same 50 questions, split three ways:
 | 5 agents × 10 questions | 314,239 | **−44%** | 50/50 |
 | 2 agents × 25 questions | **204,398** | **−63%** | 50/50 |
 
-Same questions, same answers. **Fewer, bigger agents cut 63%** — roughly double what the read block saves on the same model.
+Same questions, same answers. **Fewer, bigger agents cut 63%** — when a person does the batching. Roughly double what the read block saves on the same model.
 
-**Where the second hook fires, and why there.** Not mid-batch: refusing the last seven of a ten-agent fan-out leaves three orphans and a mess. It waits for the batch to end, then blocks the *first spawn of the next one*, carrying the evidence with it — *"your last batch was 10 subagents with a median prompt of 480 characters, about 300,000 tokens on meter drops alone."* Consequence, stated plainly: the first fan-out of a session is never blocked. There is nothing to learn from yet.
+**Where the second hook fires, and why there.** Not mid-batch: refusing the last seven of a ten-agent fan-out leaves three orphans and a mess. It waits for the batch to end, then blocks the *first wave of the next one*, carrying the evidence with it — *"your last batch was 10 subagents with a median prompt of 480 characters, about 300,000 tokens on meter drops alone."* A wave is every spawn issued in the same turn: Claude Code fires them, and their hooks, at the same instant, so they are all refused together with the same message. Consequence, stated plainly: the first fan-out of a session is never blocked. There is nothing to learn from yet.
+
+### Does the refusal make the agent batch? Measured: no.
+
+The 63% above was batched by hand. The hook's job is to get the *model* to do it, so that was tested on its own: 16 headless Claude Code sessions, each given ten questions in two batches of five. Batch A was told "one subagent per question", so the session had a wasteful batch on record. Batch B only said "also with subagents". With the hook on, the first wave of batch B was refused, with the message above and the measured entry cost in it. The control had only this hook off; the read and shell hooks stayed on in both arms.
+
+| orchestrator | hook | refused | what it did next | agents | tokens / run | $ / run | minutes | correct |
+|---|---|---|---|---|---|---|---|---|
+| Haiku 4.5 | on | 5 / 5 | insisted 4, rebatched 1 | 9.2 | 1,041,979 | 0.29 | 1.0 | 50/50 |
+| Haiku 4.5 | off | — | — | 10 | 912,278 | 0.26 | 0.8 | 29/30 |
+| Sonnet 5 | on | 5 / 5 | insisted 5 | 10 | 912,893 | 0.39 | 1.1 | 50/50 |
+| Sonnet 5 | off | — | — | 10 | 922,179 | 0.38 | 0.9 | 30/30 |
+
+Nine times out of ten the model read the refusal and re-issued the same agents with the same prompts. Once, Haiku folded two questions into one agent. Nobody wrote a longer prompt. The refusal costs a round trip — 14% more tokens and a fifth more wall-clock on Haiku, noise on Sonnet — and buys nothing, because the retry is free and the model knows it.
+
+**This is the README's own finding turned on its own hook.** Telling doesn't work, stopping does — and a block that waves the retry through is telling. The read hook gets away with it because the cheaper path is one Grep away and the refusal repeats for every file; the fan-out hook refuses once per batch, and the cheaper path means rewriting ten prompts into two. So, as shipped, the third hook is a meter, not a brake: it records every wasteful batch and quotes its cost, and its log will tell you what your fan-outs are costing you. It does not yet stop them. What would — refusing until the prompts actually change — trades away the escape hatch, and that is a decision, not a bug fix.
+
+**What was not measured.** Whether batching *hurts* anywhere: tasks that need separate contexts, or long outputs that fill one agent up. The 2 × 25 arm answered 50/50 on this task, which says nothing about those.
 
 ---
 
@@ -150,7 +173,9 @@ Eight tasks tied, one was worse with squint, one was better. The one real loss: 
 
 **Strong models need it less.** Sonnet already reads well: squint changed the outcome in only 2 groups out of 10. But in those two it saved ~70,000 tokens each. Sonnet also *insisted* (asked twice and got the file) 2 times out of 9 blocks. Haiku never did — the escape hatch is used by the models that know when they need it.
 
-**Model choice beats both hooks.** Neither hook can see that you picked an expensive model for mechanical work — that decision is already made by the time a tool call exists. Haiku with squint answered all 50 questions for $0.56; Opus, needing neither hook, cost $1.99 for the same answers. No hook can fix that for you.
+**The fan-out hook, as shipped, costs a round trip and changes nothing.** Nine retries out of ten on Haiku and Sonnet, 14% more tokens on Haiku for the same answers. The section above has the table. Until it refuses harder, it is a meter.
+
+**Model choice beats every hook.** No hook can see that you picked an expensive model for mechanical work — that decision is already made by the time a tool call exists. Haiku with squint answered all 50 questions for $0.56; Opus, needing neither hook, cost $1.99 for the same answers. No hook can fix that for you.
 
 **Claude Code already blocks exact duplicate re-reads** natively. squint is about the first read, not the second.
 
@@ -198,9 +223,11 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 
 - **Subjects:** fresh subagents, one arm at a time, identical prompts. They were not told an experiment was happening.
 - **Questions:** generated by script from the codebase (`const NAME = <literal>` in files over 12 KB, unique name across the project), with the correct answers extracted from source — never written by hand, never graded by judgement.
-- **Control:** `SQUINT_OFF=1` disables the block while still logging every decision, so the control group's behaviour is counted, not assumed.
+- **Control:** `SQUINT_OFF=1` disables the block while still logging every decision, so the control group's behaviour is counted, not assumed. The fan-out experiment uses `SQUINT_FANOUT_OFF=1` instead, so its control keeps the read and shell hooks on and differs from the treatment in one hook only.
 - **Scoring:** exact string match against the extracted answers, quoting normalised.
-- **Everything logged:** `~/.claude/squint/log.jsonl` records every decision — `slice`, `small`, `blocked`, `insisted`, `off` — so you can tell whether behaviour changed, not just whether the bill did.
+- **Everything logged:** `~/.claude/squint/log.jsonl` records every decision — `slice`, `small`, `blocked`, `insisted`, `rebatched`, `off` — so you can tell whether behaviour changed, not just whether the bill did.
+- **The fan-out experiment ships:** `node bench/fanout.cjs --src <your codebase> --model haiku --runs 5` runs it against your own code, headless, and `--report` prints the table. The raw rows behind the table above are in `bench/fanout-results.jsonl`.
+- **The hooks are tested:** `node --test test.cjs` feeds each one the JSON Claude Code would and checks every decision on this page — including five hooks fired at the same instant.
 
 ---
 
@@ -208,8 +235,13 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 
 | | |
 |---|---|
-| `SQUINT_THRESHOLD_BYTES` | when to start blocking (default `8000`) |
-| `SQUINT_OFF=1` | disable the block, keep the log — for your own A/B |
+| `SQUINT_THRESHOLD_BYTES` | when to start blocking, `Read` and shell alike (default `8000`) |
+| `SQUINT_BASH_LINES` | a `head` / `sed` range wider than this counts as the whole file (default `500`) |
+| `SQUINT_FANOUT_MIN` | how many small agents in a row make a batch wasteful (default `4`) |
+| `SQUINT_FANOUT_CHARS` | median prompt under this is "small" (default `1500`) |
+| `SQUINT_FANOUT_GAP` | seconds of quiet that end a batch (default `60`) |
+| `SQUINT_OFF=1` | disable every block, keep the log — for your own A/B |
+| `SQUINT_READ_OFF=1` · `SQUINT_BASH_OFF=1` · `SQUINT_FANOUT_OFF=1` | disable one hook only, so a control group differs in one thing |
 | `~/.claude/squint/OFF` | same, as a file — subagents do not inherit your shell, so this is the one that gives you a real control group |
 | `SQUINT_LOG=0` | turn the log off entirely |
 
@@ -225,7 +257,7 @@ Why 8 KB: swept 4 / 8 / 16 / 32 / 64 KB over 607 real sessions. 8 KB keeps 91% o
 
 ## What this is not
 
-It is not a framework, a memory layer, or a context manager. It is three hooks, under 450 lines together, that stop three specific wastes — and a measurement tool so you can check whether they stopped anything on *your* machine.
+It is not a framework, a memory layer, or a context manager. It is three hooks, about 560 lines together, that stop two specific wastes and meter a third — and a measurement tool so you can check whether they stopped anything on *your* machine.
 
 If the number doesn't move for you, uninstall it. That's what the measurement is for.
 

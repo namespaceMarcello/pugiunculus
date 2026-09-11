@@ -74,7 +74,7 @@ JSON.parse(fs.readFileSync(SETTINGS, 'utf8')) // prove it is still valid JSON
 if (UNINSTALL) {
   console.log(removed ? 'removed     ' + removed + ' squint hook(s)' : 'nothing to remove — squint was not installed')
 } else {
-  for (const e of ENTRIES) console.log('installed   ' + e.matcher.padEnd(12) + e.what)
+  for (const e of ENTRIES) console.log('installed   ' + e.matcher.padEnd(17) + e.what)
   console.log('')
   console.log('Both take effect immediately; no restart needed.')
   console.log('')
