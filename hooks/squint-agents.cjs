@@ -11,19 +11,29 @@
  *    5 agents x 10 questions  314,239   -44%
  *    2 agents x 25 questions  204,398   -63%   -- same 50/50 correct answers
  *
- * WHERE IT BLOCKS, AND WHY THERE:
- * Not mid-batch. If you spawn ten agents in one turn, refusing the last seven
- * leaves you with a shredded fan-out and three orphans. Instead this waits for
- * the batch to finish, then blocks the FIRST WAVE of the next one — the only
- * moment where stopping costs nothing and the evidence is already in hand
- * ("last batch: 10 agents, median prompt 480 chars").
+ * WHERE IT REFUSES, AND WHY THERE:
+ * Never the first fan-out of a session: there is nothing to learn from yet.
+ * Once a batch of MIN small agents has finished, every later spawn that looks
+ * the same — a prompt no longer than the ones just paid for — is refused,
+ * with the evidence ("last batch: 10 agents, median prompt 230 chars") and
+ * the ways through:
+ *   - a prompt at least twice that median (or SMALL_CHARS, whichever is
+ *     less): the agent has put several tasks in one prompt
+ *   - a valve: after VALVE refused waves in a row with no pass in between,
+ *     the next spawn goes through, so a model that never reads the message
+ *     cannot loop forever
+ *   - with SQUINT_FANOUT_ESCAPE=1, the words [separate context] in the
+ *     prompt. Off by default: measured, Sonnet wrote them into prompts that
+ *     had no such need four times out of five and paid more than the control
+ *
+ * Refusing once and waving the retry through was tried first. Measured on
+ * Haiku and Sonnet: nine retries out of ten, same agents, same prompts.
+ * A block the retry walks through is a suggestion, and suggestions were
+ * already measured not to work (README, "telling doesn't work").
  *
  * A wave is every spawn issued in the same turn: Claude Code runs them, and
- * their hooks, at the same instant. They are all refused together, with the
- * same message. Refusing only one of five would be the orphan mess above.
- *
- * Consequence, stated plainly: the first fan-out of a session is never blocked.
- * There is nothing to learn from yet.
+ * their hooks, at the same instant. Each is judged on its own prompt, so a
+ * wave of five short prompts is refused together, not one of five.
  *
  * STATE: one append-only file per session. Five hooks running at once must not
  * lose each other's writes, and a read-modify-write of one JSON file does.
@@ -31,7 +41,9 @@
  * Config (all optional):
  *   SQUINT_FANOUT_MIN     default 4     — batch size that counts as wasteful
  *   SQUINT_FANOUT_CHARS   default 1500  — median prompt below this = "small"
- *   SQUINT_FANOUT_GAP     default 60    — seconds of quiet that ends a batch
+ *   SQUINT_FANOUT_GAP     default 60    — seconds of quiet that end a batch
+ *   SQUINT_FANOUT_VALVE   default 3     — refused waves in a row before one passes
+ *   SQUINT_FANOUT_ESCAPE  default unset — "1" offers [separate context] as a way through
  *   SQUINT_OFF=1, or a file at ~/.claude/squint/OFF   — disable, keep logging
  *   SQUINT_FANOUT_OFF=1   — disable only this hook: the control group for an
  *                           A/B that leaves the read and shell hooks on
@@ -44,10 +56,13 @@ const os = require('node:os')
 
 const MIN_BATCH = Number(process.env.SQUINT_FANOUT_MIN) || 4
 const SMALL_CHARS = Number(process.env.SQUINT_FANOUT_CHARS) || 1500
-const GAP_SECONDS = Number(process.env.SQUINT_FANOUT_GAP) || 60
+const GAP_MS = (Number(process.env.SQUINT_FANOUT_GAP) || 60) * 1000
+const VALVE = Number(process.env.SQUINT_FANOUT_VALVE) || 3
 
-/** A refusal younger than this belongs to the same wave, not to a retry. */
+/** Spawns closer than this were issued in the same turn. */
 const WAVE_MS = 1500
+const ESCAPE = /\[separate context\]/i
+const ESCAPE_ON = process.env.SQUINT_FANOUT_ESCAPE === '1'
 
 const HOME = os.homedir()
 const DIR = path.join(HOME, '.claude', 'squint')
@@ -94,7 +109,8 @@ function run(ev) {
   if (!SPAWN_TOOLS.has(ev.tool_name)) return
 
   const now = Date.now()
-  const promptLength = String(ev.tool_input?.prompt || '').length
+  const prompt = String(ev.tool_input?.prompt || '')
+  const promptLength = prompt.length
   const base = { ts: new Date().toISOString(), session: ev.session_id || null, tool: ev.tool_name }
 
   // Append-only history: one line per spawn that went through ({at, len}) and
@@ -120,44 +136,53 @@ function run(ev) {
     } catch {}
   }
 
-  const last = spawns[spawns.length - 1]
-  const startsNewBatch = !last || (now - last.at) / 1000 > GAP_SECONDS
-
-  // Walk back over the previous batch: contiguous spawns with small gaps.
-  let previous = []
-  if (startsNewBatch && spawns.length) {
-    previous = [last]
-    for (let i = spawns.length - 2; i >= 0; i--) {
-      if ((previous[0].at - spawns[i].at) / 1000 > GAP_SECONDS) break
-      previous.unshift(spawns[i])
-    }
+  // Batches are runs of spawns with gaps of at most GAP. The trailing one is
+  // still open if its last spawn is recent; the batch judged is the last one
+  // that has closed. Refused spawns are not in the history, so every hook of
+  // one wave sees the same batches and reaches the same verdict.
+  let end = spawns.length - 1
+  if (end >= 0 && now - spawns[end].at <= GAP_MS) {
+    let i = end
+    while (i > 0 && spawns[i].at - spawns[i - 1].at <= GAP_MS) i--
+    end = i - 1
   }
+  const previous = []
+  for (let i = end; i >= 0; i--) {
+    if (previous.length && previous[0].at - spawns[i].at > GAP_MS) break
+    previous.unshift(spawns[i])
+  }
+  const med = median(previous.map((s) => s.len))
+  const previousWasWasteful = previous.length >= MIN_BATCH && med < SMALL_CHARS
 
-  const previousWasWasteful =
-    previous.length >= MIN_BATCH && median(previous.map((s) => s.len)) < SMALL_CHARS
-
-  if (!startsNewBatch || !previousWasWasteful) {
+  const pass = (decision, extra) => {
     record({ at: now, len: promptLength })
-    note({ ...base, decision: 'pass', batchSoFar: startsNewBatch ? 1 : spawns.length + 1, chars: promptLength })
-    return
+    note({ ...base, decision, chars: promptLength, previousBatch: previous.length, ...extra })
   }
+
+  if (!previousWasWasteful) return pass('pass')
 
   if (process.env.SQUINT_OFF === '1' || process.env.SQUINT_FANOUT_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
-    record({ at: now, len: promptLength })
-    note({ ...base, decision: 'off', previousBatch: previous.length, chars: promptLength })
-    return
+    return pass('off')
   }
 
-  // Already refused once for this batch, and long enough ago to be a retry
-  // rather than a sibling of the refused wave: let it through. A prompt that
-  // grew past the "small" line is the agent doing what the message asked.
-  const answered = refusals.some((r) => r.block === last.at && now - r.at >= WAVE_MS)
-  if (answered) {
-    record({ at: now, len: promptLength })
-    const decision = promptLength >= SMALL_CHARS ? 'rebatched' : 'insisted'
-    note({ ...base, decision, previousBatch: previous.length, chars: promptLength })
-    return
+  // The ways through: a prompt that has grown, or a declared need.
+  const enough = Math.min(SMALL_CHARS, 2 * med)
+  if (promptLength >= enough) return pass('rebatched', { medianChars: med })
+  if (ESCAPE_ON && ESCAPE.test(prompt)) return pass('escaped', { medianChars: med })
+
+  // The valve: refused waves since the last spawn that went through. Spawns
+  // of the current turn do not count as "went through" yet, so every hook of
+  // this wave counts the same waves and opens together.
+  let lastPassAt = 0
+  for (const s of spawns) if (now - s.at > WAVE_MS) lastPassAt = s.at
+  let waves = 0
+  let lastWave = -Infinity
+  for (const r of refusals) {
+    if (r.at <= lastPassAt || now - r.at <= WAVE_MS) continue // this wave does not count yet
+    if (r.at - lastWave > WAVE_MS) waves++
+    lastWave = r.at
   }
+  if (waves >= VALVE) return pass('insisted', { medianChars: med, refusedWaves: waves })
 
   // The entry cost is the installing user's, not a constant. `node measure.cjs`
   // derives it from their own logs and leaves it here.
@@ -168,22 +193,22 @@ function run(ev) {
     /* not measured yet — the message says so instead of inventing a number */
   }
 
-  record({ block: last.at, at: now })
+  record({ block: previous[previous.length - 1].at, at: now })
   const n = previous.length
-  const med = median(previous.map((s) => s.len))
-  note({ ...base, decision: 'blocked', previousBatch: n, medianChars: med, chars: promptLength })
+  note({ ...base, decision: 'blocked', previousBatch: n, medianChars: med, chars: promptLength, refusedWaves: waves + 1 })
 
   exit({
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
       permissionDecision: 'deny',
       permissionDecisionReason:
-        `Fan-out blocked once. Your last batch was ${n} subagents with a median prompt of ${med} characters. ` +
+        `Fan-out refused: your last batch was ${n} subagents with a median prompt of ${med} characters. ` +
         (toll
           ? `On this machine the cheapest subagent you have ever run cost ${toll.toLocaleString('en-US')} tokens before doing any work, so that batch spent at least ${(n * toll).toLocaleString('en-US')} tokens on entry costs alone. `
           : `Every agent pays a fixed entry cost before doing any work — tens of thousands of tokens, depending on your plugins and MCP servers. Run \`node measure.cjs\` to measure yours. `) +
         `Combining the same work into fewer, larger agents measured 63% cheaper at identical accuracy. ` +
-        `Put several tasks in each agent's prompt instead. If they genuinely need separate contexts, repeat this call and it will go through.`,
+        `Put several tasks in each agent's prompt: a prompt of at least ${enough} characters goes through.` +
+        (ESCAPE_ON ? ` If these tasks genuinely need separate contexts, write [separate context] in the prompt and it goes through.` : ''),
     },
     suppressOutput: true,
   })

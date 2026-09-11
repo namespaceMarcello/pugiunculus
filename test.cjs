@@ -179,21 +179,62 @@ describe('squint-agents.cjs — fan-out', () => {
     assert.deepEqual(decisions(s), ['blocked', 'blocked', 'blocked', 'blocked', 'blocked'])
   })
 
-  test('the retry passes as "insisted"; a longer prompt passes as "rebatched"', async () => {
+  test('the same shape is refused again; a prompt twice the median passes as "rebatched"', async () => {
     const s = fresh()
     seed(s, 5, 400, 5)
-    assert.ok(denied(agent(s)))
+    const out = agent(s)
+    assert.ok(denied(out))
+    assert.match(reason(out), /a prompt of at least 800 characters goes through/)
     await sleep(1600)
-    assert.equal(agent(s, 400), '')
-    assert.equal(agent(s, 400), '') // same batch now: plain pass
-    assert.deepEqual(decisions(s), ['blocked', 'insisted', 'pass'])
+    assert.ok(denied(agent(s, 400)))
+    assert.ok(denied(agent(s, 799)))
+    assert.equal(agent(s, 800), '')
+    assert.equal(agent(s, 800), '')
+    // the wasteful batch is still the last closed one: small prompts stay refused
+    assert.ok(denied(agent(s, 400)))
+    assert.deepEqual(decisions(s), ['blocked', 'blocked', 'blocked', 'rebatched', 'rebatched', 'blocked'])
+  })
 
+  test('the median sets the bar, capped at SQUINT_FANOUT_CHARS', () => {
+    const s = fresh()
+    seed(s, 5, 1200, 5)
+    assert.match(reason(agent(s, 400)), /at least 1500 characters/)
+  })
+
+  test('[separate context] goes through as "escaped" only when SQUINT_FANOUT_ESCAPE=1', () => {
+    const s = fresh()
+    seed(s, 5, 400, 5)
+    const ev = spawnEv(s, 300)
+    ev.tool_input.prompt = 'Audit this module. [separate context] ' + ev.tool_input.prompt
+    // default: not a way through, and the message does not offer it
+    const out = call('squint-agents.cjs', ev)
+    assert.ok(denied(out))
+    assert.doesNotMatch(reason(out), /separate context/)
+    // opted in: offered, and honoured
     const r = fresh()
     seed(r, 5, 400, 5)
-    assert.ok(denied(agent(r)))
+    ev.session_id = r
+    assert.match(reason(agent(r, 400, { SQUINT_FANOUT_ESCAPE: '1' })), /write \[separate context\]/)
+    assert.equal(call('squint-agents.cjs', ev, { SQUINT_FANOUT_ESCAPE: '1' }), '')
+    assert.deepEqual(decisions(r), ['blocked', 'escaped'])
+  })
+
+  test('the valve: after three refused waves the next one passes as "insisted"', async () => {
+    const s = fresh()
+    seed(s, 5, 400, 5)
+    for (let wave = 1; wave <= 3; wave++) {
+      const outs = await callAll('squint-agents.cjs', [spawnEv(s), spawnEv(s)])
+      assert.equal(outs.filter(denied).length, 2, 'wave ' + wave)
+      await sleep(1600)
+    }
+    const outs = await callAll('squint-agents.cjs', [spawnEv(s), spawnEv(s)])
+    assert.equal(outs.filter(denied).length, 0)
+    const d = decisions(s)
+    assert.equal(d.filter((x) => x === 'blocked').length, 6)
+    assert.equal(d.filter((x) => x === 'insisted').length, 2)
+    // and the valve closes again behind them
     await sleep(1600)
-    assert.equal(agent(r, 2000), '')
-    assert.deepEqual(decisions(r), ['blocked', 'rebatched'])
+    assert.ok(denied(agent(s, 400)))
   })
 
   test('a batch of two, or a batch of long prompts, is not wasteful', () => {
@@ -205,10 +246,20 @@ describe('squint-agents.cjs — fan-out', () => {
     assert.equal(agent(r), '')
   })
 
-  test('a batch still in progress is never cut in half', () => {
+  test('a first batch still in progress is never cut in half', () => {
     const s = fresh()
     seed(s, 6, 400, 0)
     assert.equal(agent(s), '')
+  })
+
+  test('after a good batch, the next fan-out starts fresh', () => {
+    const s = fresh()
+    seed(s, 6, 400, 10) // wasteful, long ago
+    fs.appendFileSync(
+      path.join(STATE, 'fanout-' + s + '.jsonl'),
+      [JSON.stringify({ at: Date.now() - 5 * 60000, len: 3000 }), JSON.stringify({ at: Date.now() - 5 * 60000 + 500, len: 3000 })].join('\n') + '\n'
+    )
+    assert.equal(agent(s, 400), '')
   })
 
   test('ignores other tools, honours the OFF switches', () => {

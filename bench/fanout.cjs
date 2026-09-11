@@ -11,8 +11,11 @@
  * session has a wasteful batch on record. Batch B only says "also with
  * subagents". With the hook on, the first wave of batch B is refused.
  *
- *   node bench/fanout.cjs --src <ts codebase> --model haiku --runs 5 [--off] [--out results.jsonl]
+ *   node bench/fanout.cjs --src <ts codebase> --model haiku --runs 5 [--off] [--escape] [--out results.jsonl]
  *   node bench/fanout.cjs --report results.jsonl
+ *
+ * --off is the control (only this hook disabled); --escape runs the hook
+ * with the [separate context] way through offered (SQUINT_FANOUT_ESCAPE=1).
  *
  * Each run appends one JSON line: cost, duration, spawns, every squint-agents
  * decision for that session, the answers and the score. Nothing is uploaded
@@ -42,9 +45,11 @@ if (opt('report')) {
     .filter(Boolean)
     .map((l) => JSON.parse(l))
   const groups = {}
-  for (const r of rows) (groups[(r.model + (r.off ? ' · hook off' : ' · hook on')).padEnd(18)] ||= []).push(r)
+  // Rows written before the hatch became opt-in carry `noEscape` instead of `escape`.
+  const escaped = (r) => (r.escape !== undefined ? r.escape : r.noEscape === false)
+  for (const r of rows) (groups[(r.model + (r.off ? ' · hook off' : escaped(r) ? ' · on, escape' : ' · hook on')).padEnd(18)] ||= []).push(r)
   const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
-  console.log('arm                 runs  fired  reaction after the block          spawns  tokens/run   $/run  minutes  correct')
+  console.log('arm                 runs  fired  reaction after the refusal        spawns  tokens/run   $/run  minutes  correct')
   for (const [arm, rs] of Object.entries(groups)) {
     // Reactions are re-derived from the logged decisions, so a better
     // classifier never needs the runs repeated.
@@ -79,6 +84,7 @@ if (!SRC) {
 const MODEL = opt('model', 'haiku')
 const RUNS = Number(opt('runs', 1))
 const OFF = flag('off')
+const ESCAPE = flag('escape')
 const GAP = opt('gap', '10')
 const OUT = opt('out', 'fanout-results.jsonl')
 const CLAUDE = opt('claude', process.platform === 'win32' ? 'claude.exe' : 'claude')
@@ -179,26 +185,27 @@ function hookDecisions(sessionId) {
       }
     })
     .filter((r) => r && r.session === sessionId && (r.tool === 'Agent' || r.tool === 'Task'))
-    .map((r) => ({ d: r.decision, chars: r.chars ?? r.medianChars ?? null, prev: r.previousBatch ?? null }))
+    .map((r) => ({ d: r.decision, chars: r.chars ?? null, prev: r.previousBatch ?? null, waves: r.refusedWaves ?? null }))
 }
 
 /** What the orchestrator did after the first refusal, read from the hook's own log. */
 function reaction(decs) {
   const i = decs.findIndex((x) => x.d === 'blocked')
-  if (i < 0) return { fired: false, reaction: 'not fired', spawnsAfter: 0, medianAfter: null }
+  if (i < 0) return { fired: false, reaction: 'not fired', spawnsAfter: 0, medianAfter: null, refusedWaves: 0 }
   const after = decs.slice(i).filter((x) => x.d !== 'blocked')
-  const prev = decs[i].prev || 0
   const chars = after.map((x) => x.chars).filter((c) => c !== null).sort((a, b) => a - b)
   const median = chars.length ? chars[Math.floor(chars.length / 2)] : null
-  // "Rebatched" means the work was actually consolidated: at most half the
-  // agents, or prompts past the hook's own "small" line. Five agents becoming
-  // four with the same prompts is insisting with a rounding error.
+  const waves = Math.max(0, ...decs.filter((x) => x.d === 'blocked').map((x) => x.waves || 1))
+  const has = (d) => after.some((x) => x.d === d)
+  // The hook itself names how each spawn got through; the run is labelled by
+  // the first way it found.
   let r
   if (!after.length) r = 'no more spawns'
-  else if (after.length <= Math.ceil(prev / 2)) r = 'rebatched: fewer agents'
-  else if (median !== null && median >= 1500) r = 'rebatched: longer prompts'
-  else r = 'insisted, same shape'
-  return { fired: true, reaction: r, spawnsAfter: after.length, medianAfter: median }
+  else if (has('rebatched')) r = 'rebatched'
+  else if (has('escaped')) r = 'escaped: [separate context]'
+  else if (has('insisted')) r = 'insisted until the valve'
+  else r = 'passed'
+  return { fired: true, reaction: r, spawnsAfter: after.length, medianAfter: median, refusedWaves: waves }
 }
 
 function runOnce(i) {
@@ -212,6 +219,8 @@ function runOnce(i) {
   delete env.SQUINT_OFF
   if (OFF) env.SQUINT_FANOUT_OFF = '1'
   else delete env.SQUINT_FANOUT_OFF
+  if (ESCAPE) env.SQUINT_FANOUT_ESCAPE = '1'
+  else delete env.SQUINT_FANOUT_ESCAPE
 
   const t0 = Date.now()
   const r = spawnSync(
@@ -235,6 +244,7 @@ function runOnce(i) {
   return {
     model: MODEL,
     off: OFF,
+    escape: ESCAPE,
     session: res.session_id,
     durationMs: Date.now() - t0,
     cost: res.total_cost_usd || 0,
@@ -253,7 +263,7 @@ function runOnce(i) {
 }
 
 for (let i = 0; i < RUNS; i++) {
-  process.stdout.write(`run ${i + 1}/${RUNS}  ${MODEL}  hook ${OFF ? 'off' : 'on'} ... `)
+  process.stdout.write(`run ${i + 1}/${RUNS}  ${MODEL}  hook ${OFF ? 'off' : ESCAPE ? 'on, escape' : 'on'} ... `)
   const row = runOnce(i)
   fs.appendFileSync(OUT, JSON.stringify(row) + '\n')
   if (row.error) console.log('ERROR ' + row.error)

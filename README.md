@@ -8,7 +8,7 @@ squint is three hooks that stop the ways a coding agent burns tokens on nothing:
 - **`cat BIG` instead** — the same waste through the shell, which is where most of it actually happens
 - **spawning ten small subagents** where two would do — each pays a fixed entry cost before doing any work
 
-Each refuses once and explains the cost. If the agent really needs it, it asks again and gets it. The first two are measured to pay off. The third, as shipped, is measured *not* to change what the model does — its section says so, with numbers.
+The first two refuse once and explain the cost; if the agent really needs it, it asks again and gets it. The third refuses until the prompts change, because refusing once was measured to change nothing — its section says so, with numbers.
 
 ```bash
 git clone https://github.com/namespaceMarcello/squint && node squint/install.cjs
@@ -83,24 +83,36 @@ The same 50 questions, split three ways:
 
 Same questions, same answers. **Fewer, bigger agents cut 63%** — when a person does the batching. Roughly double what the read block saves on the same model.
 
-**Where the second hook fires, and why there.** Not mid-batch: refusing the last seven of a ten-agent fan-out leaves three orphans and a mess. It waits for the batch to end, then blocks the *first wave of the next one*, carrying the evidence with it — *"your last batch was 10 subagents with a median prompt of 480 characters, about 300,000 tokens on meter drops alone."* A wave is every spawn issued in the same turn: Claude Code fires them, and their hooks, at the same instant, so they are all refused together with the same message. Consequence, stated plainly: the first fan-out of a session is never blocked. There is nothing to learn from yet.
+**Where the third hook refuses, and why there.** Never the first fan-out of a session: there is nothing to learn from yet. Once a batch of four or more small agents has finished, every later spawn that looks the same — a prompt no longer than the ones just paid for — is refused, carrying the evidence with it — *"your last batch was 10 subagents with a median prompt of 230 characters, about 300,000 tokens on entry costs alone"* — and the way through: a prompt at least twice that median. A valve lets the fourth refused wave through, so a model that never reads the message cannot loop. (`SQUINT_FANOUT_ESCAPE=1` adds a second way through, `[separate context]` written in the prompt; it is off by default, for the reason measured below.) A wave is every spawn issued in the same turn: Claude Code fires them, and their hooks, at the same instant, and each is judged on its own prompt, so five short prompts are refused together, not one of five.
 
-### Does the refusal make the agent batch? Measured: no.
+### Does the refusal make the agent batch?
 
-The 63% above was batched by hand. The hook's job is to get the *model* to do it, so that was tested on its own: 16 headless Claude Code sessions, each given ten questions in two batches of five. Batch A was told "one subagent per question", so the session had a wasteful batch on record. Batch B only said "also with subagents". With the hook on, the first wave of batch B was refused, with the message above and the measured entry cost in it. The control had only this hook off; the read and shell hooks stayed on in both arms.
+The 63% above was batched by hand. The hook's job is to get the *model* to do it, so that was tested on its own: headless Claude Code sessions, each given ten questions in two batches of five. Batch A was told "one subagent per question", so the session had a wasteful batch on record. Batch B only said "also with subagents". With the hook on, the first wave of batch B was refused. The control had only this hook off; the read and shell hooks stayed on in both arms.
 
-| orchestrator | hook | refused | what it did next | agents | tokens / run | $ / run | minutes | correct |
-|---|---|---|---|---|---|---|---|---|
-| Haiku 4.5 | on | 5 / 5 | insisted 4, rebatched 1 | 9.2 | 1,041,979 | 0.29 | 1.0 | 50/50 |
-| Haiku 4.5 | off | — | — | 10 | 912,278 | 0.26 | 0.8 | 29/30 |
-| Sonnet 5 | on | 5 / 5 | insisted 5 | 10 | 912,893 | 0.39 | 1.1 | 50/50 |
-| Sonnet 5 | off | — | — | 10 | 922,179 | 0.38 | 0.9 | 30/30 |
+**The first version refused once and let the retry through.** Measured: it changed nothing.
 
-Nine times out of ten the model read the refusal and re-issued the same agents with the same prompts. Once, Haiku folded two questions into one agent. Nobody wrote a longer prompt. The refusal costs a round trip — 14% more tokens and a fifth more wall-clock on Haiku, noise on Sonnet — and buys nothing, because the retry is free and the model knows it.
+| orchestrator | hook | what it did after the refusal | agents | tokens / run | $ / run | correct |
+|---|---|---|---|---|---|---|
+| Haiku 4.5 | refuse once | insisted 4 / 5, rebatched 1 / 5 | 9.2 | 1,041,979 | 0.29 | 50/50 |
+| Sonnet 5 | refuse once | insisted 5 / 5 | 10 | 912,893 | 0.39 | 50/50 |
 
-**This is the README's own finding turned on its own hook.** Telling doesn't work, stopping does — and a block that waves the retry through is telling. The read hook gets away with it because the cheaper path is one Grep away and the refusal repeats for every file; the fan-out hook refuses once per batch, and the cheaper path means rewriting ten prompts into two. So, as shipped, the third hook is a meter, not a brake: it records every wasteful batch and quotes its cost, and its log will tell you what your fan-outs are costing you. It does not yet stop them. What would — refusing until the prompts actually change — trades away the escape hatch, and that is a decision, not a bug fix.
+Nine times out of ten the model read the refusal and re-issued the same agents with the same prompts. The refusal cost a round trip and bought nothing, because the retry was free and the model knew it. Telling doesn't work, stopping does — and a block that waves the retry through is telling. That is the README's own finding turned on its own hook.
 
-**What was not measured.** Whether batching *hurts* anywhere: tasks that need separate contexts, or long outputs that fill one agent up. The 2 × 25 arm answered 50/50 on this task, which says nothing about those.
+**So now it refuses until the prompts change.** Same experiment, same control:
+
+| orchestrator | hook | what it did after the refusal | agents | tokens / run | $ / run | minutes | correct |
+|---|---|---|---|---|---|---|---|
+| Haiku 4.5 | off | — | 10 | 912,278 | 0.26 | 0.8 | 29/30 |
+| Haiku 4.5 | **on**, hatch offered | **rebatched 5 / 5** | **6.6** | **821,277** | **0.23** | 1.1 | 50/50 |
+| Sonnet 5 | off | — | 10 | 922,179 | 0.38 | 0.9 | 30/30 |
+| Sonnet 5 | on, hatch offered | escaped 4 / 5, rebatched 1 / 5 | 9.4 | 1,002,250 | 0.42 | 1.1 | 50/50 |
+| Sonnet 5 | **on**, no hatch | **rebatched 4 / 5**, valve 1 / 5 | **7.2** | **811,527** | **0.35** | 1.2 | 50/50 |
+
+Haiku, refused twice, folded the five questions into one or two agents every time: 10% fewer tokens, 12% less money, a third longer on the clock, every answer right. It never touched the hatch.
+
+Sonnet read the same message and, four times out of five, wrote `[separate context]` into prompts that had no such need — Haiku had just shown these tasks batch fine — and launched its ten agents anyway, paying 10% *more* than the control for the refused waves. The escape hatch was used by the model that read the message, and it was used as a bypass. With the hatch gone, the same Sonnet folded the questions four times out of five and hit the valve once: 12% fewer tokens, 8% less money. So the hatch is off by default and one environment variable away, on the strength of five runs. A model that genuinely needs separate contexts now pays three refused waves for them; that cost is in the table too, in the valve row's minutes.
+
+**What was not measured.** Whether batching *hurts* anywhere: tasks that need separate contexts, or long outputs that fill one agent up. Every batched arm answered 50/50 on this task, which says nothing about those. Opus was not tried as an orchestrator.
 
 ---
 
@@ -173,7 +185,7 @@ Eight tasks tied, one was worse with squint, one was better. The one real loss: 
 
 **Strong models need it less.** Sonnet already reads well: squint changed the outcome in only 2 groups out of 10. But in those two it saved ~70,000 tokens each. Sonnet also *insisted* (asked twice and got the file) 2 times out of 9 blocks. Haiku never did — the escape hatch is used by the models that know when they need it.
 
-**The fan-out hook, as shipped, costs a round trip and changes nothing.** Nine retries out of ten on Haiku and Sonnet, 14% more tokens on Haiku for the same answers. The section above has the table. Until it refuses harder, it is a meter.
+**The fan-out hook buys a fifth of what hand-batching does.** Batching by hand cut 63%; the refusal, on the same kind of task, cut 10–12%, because the model folds five questions into two agents, not twenty-five into one. And it adds a third to the wall-clock: two refused waves before the work starts.
 
 **Model choice beats every hook.** No hook can see that you picked an expensive model for mechanical work — that decision is already made by the time a tool call exists. Haiku with squint answered all 50 questions for $0.56; Opus, needing neither hook, cost $1.99 for the same answers. No hook can fix that for you.
 
@@ -225,8 +237,8 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 - **Questions:** generated by script from the codebase (`const NAME = <literal>` in files over 12 KB, unique name across the project), with the correct answers extracted from source — never written by hand, never graded by judgement.
 - **Control:** `SQUINT_OFF=1` disables the block while still logging every decision, so the control group's behaviour is counted, not assumed. The fan-out experiment uses `SQUINT_FANOUT_OFF=1` instead, so its control keeps the read and shell hooks on and differs from the treatment in one hook only.
 - **Scoring:** exact string match against the extracted answers, quoting normalised.
-- **Everything logged:** `~/.claude/squint/log.jsonl` records every decision — `slice`, `small`, `blocked`, `insisted`, `rebatched`, `off` — so you can tell whether behaviour changed, not just whether the bill did.
-- **The fan-out experiment ships:** `node bench/fanout.cjs --src <your codebase> --model haiku --runs 5` runs it against your own code, headless, and `--report` prints the table. The raw rows behind the table above are in `bench/fanout-results.jsonl`.
+- **Everything logged:** `~/.claude/squint/log.jsonl` records every decision — `slice`, `small`, `blocked`, `insisted`, `rebatched`, `escaped`, `off` — so you can tell whether behaviour changed, not just whether the bill did.
+- **The fan-out experiment ships:** `node bench/fanout.cjs --src <your codebase> --model haiku --runs 5` runs it against your own code, headless, and `--report` prints the table. The raw rows behind the tables above are in `bench/fanout-results.jsonl` (refuse-until-changed) and `bench/fanout-results-v1.jsonl` (refuse once).
 - **The hooks are tested:** `node --test test.cjs` feeds each one the JSON Claude Code would and checks every decision on this page — including five hooks fired at the same instant.
 
 ---
@@ -240,6 +252,8 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 | `SQUINT_FANOUT_MIN` | how many small agents in a row make a batch wasteful (default `4`) |
 | `SQUINT_FANOUT_CHARS` | median prompt under this is "small" (default `1500`) |
 | `SQUINT_FANOUT_GAP` | seconds of quiet that end a batch (default `60`) |
+| `SQUINT_FANOUT_VALVE` | refused waves in a row before one is let through anyway (default `3`) |
+| `SQUINT_FANOUT_ESCAPE=1` | offer `[separate context]` as a way through the fan-out refusal — off by default, Sonnet used it as a bypass 4 times out of 5 |
 | `SQUINT_OFF=1` | disable every block, keep the log — for your own A/B |
 | `SQUINT_READ_OFF=1` · `SQUINT_BASH_OFF=1` · `SQUINT_FANOUT_OFF=1` | disable one hook only, so a control group differs in one thing |
 | `~/.claude/squint/OFF` | same, as a file — subagents do not inherit your shell, so this is the one that gives you a real control group |
@@ -257,7 +271,7 @@ Why 8 KB: swept 4 / 8 / 16 / 32 / 64 KB over 607 real sessions. 8 KB keeps 91% o
 
 ## What this is not
 
-It is not a framework, a memory layer, or a context manager. It is three hooks, about 560 lines together, that stop two specific wastes and meter a third — and a measurement tool so you can check whether they stopped anything on *your* machine.
+It is not a framework, a memory layer, or a context manager. It is three hooks, about 560 lines together, that stop three specific wastes — and a measurement tool so you can check whether they stopped anything on *your* machine.
 
 If the number doesn't move for you, uninstall it. That's what the measurement is for.
 
