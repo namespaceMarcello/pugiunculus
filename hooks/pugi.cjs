@@ -1,37 +1,37 @@
 #!/usr/bin/env node
 /**
- * squint — a Claude Code PreToolUse hook.
+ * pugi — a Claude Code PreToolUse hook.
  *
  * Your agent opens a 21,000-token file to read ten lines. Then those 21,000
  * tokens sit in its context for the rest of the session, competing with
  * everything that matters.
  *
- * squint stops the first whole-file Read of a large file and says what it costs.
+ * pugi stops the first whole-file Read of a large file and says what it costs.
  * If the agent really needs the whole file, it repeats the Read and gets it.
  *
  * Config (environment variables, all optional):
- *   SQUINT_THRESHOLD_BYTES   default 8000  — below this, whole reads are fine
- *   SQUINT_LOG               default "1"   — "0" disables the decision log
- *   SQUINT_OFF               default unset — set to "1" to disable (for A/B tests)
- *   SQUINT_READ_OFF          default unset — "1" disables only this hook
+ *   PUGI_THRESHOLD_BYTES     default 8000  — below this, whole reads are fine
+ *   PUGI_LOG                 default "1"   — "0" disables the decision log
+ *   PUGI_OFF                 default unset — set to "1" to disable (for A/B tests)
+ *   PUGI_READ_OFF            default unset — "1" disables only this hook
  *
- * A file at ~/.claude/squint/OFF disables it too. Use that one when you want a
+ * A file at ~/.claude/pugi/OFF disables it too. Use that one when you want a
  * control group across subagents, which do not inherit your shell environment.
  *
- * The log lives at ~/.claude/squint/log.jsonl and records every decision,
- * including when squint is off. That is how you measure whether it helps.
+ * The log lives at ~/.claude/pugi/log.jsonl and records every decision,
+ * including when pugi is off. That is how you measure whether it helps.
  */
 
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 
-const THRESHOLD = Number(process.env.SQUINT_THRESHOLD_BYTES) || 8000
-const LOGGING = process.env.SQUINT_LOG !== '0'
+const THRESHOLD = Number(process.env.PUGI_THRESHOLD_BYTES) || 8000
+const LOGGING = process.env.PUGI_LOG !== '0'
 const HOME = os.homedir()
-const DIR = path.join(HOME, '.claude', 'squint')
+const DIR = path.join(HOME, '.claude', 'pugi')
 const LOG = path.join(DIR, 'log.jsonl')
-const STATE = path.join(os.tmpdir(), 'squint-state')
+const STATE = path.join(os.tmpdir(), 'pugi-state')
 const OFF_SWITCH = path.join(DIR, 'OFF')
 
 /** Files that cannot meaningfully be read in slices. */
@@ -101,7 +101,7 @@ function run(ev) {
   // Two ways to switch it off — the env var for a single run, the file for a
   // whole batch. The file matters because subagents do not inherit your shell:
   // it is the only way to run a real control group across spawned agents.
-  if (process.env.SQUINT_OFF === '1' || process.env.SQUINT_READ_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
+  if (process.env.PUGI_OFF === '1' || process.env.PUGI_READ_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
     note({ ...base, decision: 'off', bytes: stat.size })
     return
   }

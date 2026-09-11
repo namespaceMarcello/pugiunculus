@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * squint-agents — a Claude Code PreToolUse hook for subagent fan-out.
+ * pugi-agents — a Claude Code PreToolUse hook for subagent fan-out.
  *
  * A Haiku subagent that does nothing at all costs ~29,600 tokens before any
  * work happens. Sonnet: ~43,600. That is a meter drop, and every agent you
@@ -22,7 +22,7 @@
  *   - a valve: after VALVE refused waves in a row with no pass in between,
  *     the next spawn goes through, so a model that never reads the message
  *     cannot loop forever
- *   - with SQUINT_FANOUT_ESCAPE=1, the words [separate context] in the
+ *   - with PUGI_FANOUT_ESCAPE=1, the words [separate context] in the
  *     prompt. Off by default: measured, Sonnet wrote them into prompts that
  *     had no such need four times out of five and paid more than the control
  *
@@ -39,36 +39,36 @@
  * lose each other's writes, and a read-modify-write of one JSON file does.
  *
  * Config (all optional):
- *   SQUINT_FANOUT_MIN     default 4     — batch size that counts as wasteful
- *   SQUINT_FANOUT_CHARS   default 1500  — median prompt below this = "small"
- *   SQUINT_FANOUT_GAP     default 60    — seconds of quiet that end a batch
- *   SQUINT_FANOUT_VALVE   default 3     — refused waves in a row before one passes
- *   SQUINT_FANOUT_ESCAPE  default unset — "1" offers [separate context] as a way through
- *   SQUINT_OFF=1, or a file at ~/.claude/squint/OFF   — disable, keep logging
- *   SQUINT_FANOUT_OFF=1   — disable only this hook: the control group for an
+ *   PUGI_FANOUT_MIN       default 4     — batch size that counts as wasteful
+ *   PUGI_FANOUT_CHARS     default 1500  — median prompt below this = "small"
+ *   PUGI_FANOUT_GAP       default 60    — seconds of quiet that end a batch
+ *   PUGI_FANOUT_VALVE     default 3     — refused waves in a row before one passes
+ *   PUGI_FANOUT_ESCAPE    default unset — "1" offers [separate context] as a way through
+ *   PUGI_OFF=1, or a file at ~/.claude/pugi/OFF   — disable, keep logging
+ *   PUGI_FANOUT_OFF=1     — disable only this hook: the control group for an
  *                           A/B that leaves the read and shell hooks on
- *   SQUINT_LOG=0          — no decision log
+ *   PUGI_LOG=0            — no decision log
  */
 
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 
-const MIN_BATCH = Number(process.env.SQUINT_FANOUT_MIN) || 4
-const SMALL_CHARS = Number(process.env.SQUINT_FANOUT_CHARS) || 1500
-const GAP_MS = (Number(process.env.SQUINT_FANOUT_GAP) || 60) * 1000
-const VALVE = Number(process.env.SQUINT_FANOUT_VALVE) || 3
+const MIN_BATCH = Number(process.env.PUGI_FANOUT_MIN) || 4
+const SMALL_CHARS = Number(process.env.PUGI_FANOUT_CHARS) || 1500
+const GAP_MS = (Number(process.env.PUGI_FANOUT_GAP) || 60) * 1000
+const VALVE = Number(process.env.PUGI_FANOUT_VALVE) || 3
 
 /** Spawns closer than this were issued in the same turn. */
 const WAVE_MS = 1500
 const ESCAPE = /\[separate context\]/i
-const ESCAPE_ON = process.env.SQUINT_FANOUT_ESCAPE === '1'
+const ESCAPE_ON = process.env.PUGI_FANOUT_ESCAPE === '1'
 
 const HOME = os.homedir()
-const DIR = path.join(HOME, '.claude', 'squint')
+const DIR = path.join(HOME, '.claude', 'pugi')
 const LOG = path.join(DIR, 'log.jsonl')
 const OFF_SWITCH = path.join(DIR, 'OFF')
-const STATE = path.join(os.tmpdir(), 'squint-state')
+const STATE = path.join(os.tmpdir(), 'pugi-state')
 
 const SPAWN_TOOLS = new Set(['Task', 'Agent'])
 
@@ -78,7 +78,7 @@ function exit(payload) {
 }
 
 function note(row) {
-  if (process.env.SQUINT_LOG === '0') return
+  if (process.env.PUGI_LOG === '0') return
   try {
     fs.mkdirSync(DIR, { recursive: true })
     fs.appendFileSync(LOG, JSON.stringify(row) + '\n')
@@ -161,7 +161,7 @@ function run(ev) {
 
   if (!previousWasWasteful) return pass('pass')
 
-  if (process.env.SQUINT_OFF === '1' || process.env.SQUINT_FANOUT_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
+  if (process.env.PUGI_OFF === '1' || process.env.PUGI_FANOUT_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
     return pass('off')
   }
 

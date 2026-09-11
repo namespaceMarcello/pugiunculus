@@ -3,7 +3,7 @@
  * bench/fanout.cjs — does the fan-out block change what the agent does?
  *
  * The README's −63% comes from prompts a person batched by hand. This asks the
- * other question: when squint-agents refuses a fan-out, does the orchestrating
+ * other question: when pugi-agents refuses a fan-out, does the orchestrating
  * model rebatch, insist, or stop delegating — and what does each cost?
  *
  * One run = one headless Claude Code session (`claude -p`) given ten questions
@@ -15,9 +15,9 @@
  *   node bench/fanout.cjs --report results.jsonl
  *
  * --off is the control (only this hook disabled); --escape runs the hook
- * with the [separate context] way through offered (SQUINT_FANOUT_ESCAPE=1).
+ * with the [separate context] way through offered (PUGI_FANOUT_ESCAPE=1).
  *
- * Each run appends one JSON line: cost, duration, spawns, every squint-agents
+ * Each run appends one JSON line: cost, duration, spawns, every pugi-agents
  * decision for that session, the answers and the score. Nothing is uploaded
  * beyond the normal Claude Code calls the session itself makes.
  */
@@ -34,7 +34,7 @@ const opt = (name, def) => {
 }
 const flag = (name) => argv.includes('--' + name)
 
-const LOG = path.join(os.homedir(), '.claude', 'squint', 'log.jsonl')
+const LOG = path.join(os.homedir(), '.claude', 'pugi', 'log.jsonl')
 
 // ------------------------------------------------------------------ report
 
@@ -210,17 +210,17 @@ function reaction(decs) {
 
 function runOnce(i) {
   const qs = POOL.slice((i * 10) % (POOL.length - 9), (i * 10) % (POOL.length - 9) + 10)
-  const cwd = path.join(os.tmpdir(), 'squint-bench')
+  const cwd = path.join(os.tmpdir(), 'pugi-bench')
   fs.mkdirSync(cwd, { recursive: true })
   // The control differs in one thing only: the fan-out hook. The read and
   // shell hooks stay on in both arms, or their savings would be booked here.
-  const env = { ...process.env, SQUINT_FANOUT_GAP: GAP }
+  const env = { ...process.env, PUGI_FANOUT_GAP: GAP }
   delete env.CLAUDECODE
-  delete env.SQUINT_OFF
-  if (OFF) env.SQUINT_FANOUT_OFF = '1'
-  else delete env.SQUINT_FANOUT_OFF
-  if (ESCAPE) env.SQUINT_FANOUT_ESCAPE = '1'
-  else delete env.SQUINT_FANOUT_ESCAPE
+  delete env.PUGI_OFF
+  if (OFF) env.PUGI_FANOUT_OFF = '1'
+  else delete env.PUGI_FANOUT_OFF
+  if (ESCAPE) env.PUGI_FANOUT_ESCAPE = '1'
+  else delete env.PUGI_FANOUT_ESCAPE
 
   const t0 = Date.now()
   const r = spawnSync(

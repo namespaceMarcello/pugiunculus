@@ -1,14 +1,16 @@
-# squint
+# Pugiunculus
 
 **Your coding agent opens an 84 KB file to read ten lines. Then carries 12,000 tokens of it for the rest of the session.**
 
-squint is three hooks that stop the ways a coding agent burns tokens on nothing:
+Pugiunculus is three hooks that stop the ways a coding agent burns tokens on nothing:
 
 - **opening a whole file** to read ten lines — 11,747 tokens where 614 would do
 - **`cat BIG` instead** — the same waste through the shell, which is where most of it actually happens
 - **spawning ten small subagents** where two would do — each pays a fixed entry cost before doing any work
 
 The first two refuse once and explain the cost; if the agent really needs it, it asks again and gets it. The third refuses until the prompts change, because refusing once was measured to change nothing — its section says so, with numbers.
+
+For the tokens that are already in, there is also a **notebook**, off by default: it lets the conversation be cut without losing the thread. [Its section](#the-notebook-cut-the-conversation-keep-the-thread) has the numbers.
 
 ```bash
 git clone https://github.com/namespaceMarcello/squint && node squint/install.cjs
@@ -71,7 +73,7 @@ Two things to know before installing it. The shell tool cuts its output at about
 
 A Haiku subagent that does *nothing at all* — zero tools, replies "OK" — already cost **29,584 tokens** on the machine this was built on. Sonnet: **43,586**. That is an entry fee, paid before any work happens, once per agent you spawn.
 
-**That number is not a constant, and squint does not pretend it is.** It is the sum of your system prompt, every tool schema, your skill list and your CLAUDE.md — so it depends on your plugins and MCP servers, not on ours. `node measure.cjs` derives yours from your own logs (the cheapest subagent you have ever run) and the hook quotes *that* back at you when it blocks. Until you run it, the refusal says so instead of inventing a figure.
+**That number is not a constant, and Pugiunculus does not pretend it is.** It is the sum of your system prompt, every tool schema, your skill list and your CLAUDE.md — so it depends on your plugins and MCP servers, not on ours. `node measure.cjs` derives yours from your own logs (the cheapest subagent you have ever run) and the hook quotes *that* back at you when it blocks. Until you run it, the refusal says so instead of inventing a figure.
 
 The same 50 questions, split three ways:
 
@@ -83,7 +85,7 @@ The same 50 questions, split three ways:
 
 Same questions, same answers. **Fewer, bigger agents cut 63%** — when a person does the batching. Roughly double what the read block saves on the same model.
 
-**Where the third hook refuses, and why there.** Never the first fan-out of a session: there is nothing to learn from yet. Once a batch of four or more small agents has finished, every later spawn that looks the same — a prompt no longer than the ones just paid for — is refused, carrying the evidence with it — *"your last batch was 10 subagents with a median prompt of 230 characters, about 300,000 tokens on entry costs alone"* — and the way through: a prompt at least twice that median. A valve lets the fourth refused wave through, so a model that never reads the message cannot loop. (`SQUINT_FANOUT_ESCAPE=1` adds a second way through, `[separate context]` written in the prompt; it is off by default, for the reason measured below.) A wave is every spawn issued in the same turn: Claude Code fires them, and their hooks, at the same instant, and each is judged on its own prompt, so five short prompts are refused together, not one of five.
+**Where the third hook refuses, and why there.** Never the first fan-out of a session: there is nothing to learn from yet. Once a batch of four or more small agents has finished, every later spawn that looks the same — a prompt no longer than the ones just paid for — is refused, carrying the evidence with it — *"your last batch was 10 subagents with a median prompt of 230 characters, about 300,000 tokens on entry costs alone"* — and the way through: a prompt at least twice that median. A valve lets the fourth refused wave through, so a model that never reads the message cannot loop. (`PUGI_FANOUT_ESCAPE=1` adds a second way through, `[separate context]` written in the prompt; it is off by default, for the reason measured below.) A wave is every spawn issued in the same turn: Claude Code fires them, and their hooks, at the same instant, and each is judged on its own prompt, so five short prompts are refused together, not one of five.
 
 ### Does the refusal make the agent batch?
 
@@ -118,23 +120,23 @@ Sonnet read the same message and, four times out of five, wrote `[separate conte
 
 ## Does it actually work?
 
-50 questions about a 40,000-line TypeScript codebase, each requiring one exact value from a large file. Every question asked twice — once with squint, once without — to fresh subagents that had no idea they were in an experiment. 100 runs.
+50 questions about a 40,000-line TypeScript codebase, each requiring one exact value from a large file. Every question asked twice — once with Pugiunculus, once without — to fresh subagents that had no idea they were in an experiment. 100 runs.
 
-| model | with squint | without | difference | correct answers |
+| model | with Pugiunculus | without | difference | correct answers |
 |---|---|---|---|---|
 | Haiku 4.5 | 558,726 | 817,065 | **+46.2% without** | 50/50 both ways |
 | Sonnet | 493,503 | 603,494 | **+22.3% without** | 50/50 both ways |
 | Opus | 398,611 | 407,423 | **+2.2% — noise** | 50/50 both ways |
 
-**Not one wrong answer, either way.** squint made it cheaper, never worse.
+**Not one wrong answer, either way.** Pugiunculus made it cheaper, never worse.
 
 On Haiku it helped in **10 groups out of 10** — no exceptions. Its cost: about three extra tool calls per ten questions.
 
 ### The stronger the model, the less this matters
 
-That third row is the one to read carefully. **On Opus, squint fired zero times.** Not "rarely" — never. Across 50 questions and 10 agents, Opus did not open a single whole file. It went straight to Grep every time, so the hook had nothing to block. The +2.2% is one noisy group, not an effect.
+That third row is the one to read carefully. **On Opus, Pugiunculus fired zero times.** Not "rarely" — never. Across 50 questions and 10 agents, Opus did not open a single whole file. It went straight to Grep every time, so the hook had nothing to block. The +2.2% is one noisy group, not an effect.
 
-| model | groups where squint changed the outcome | times it fired |
+| model | groups where Pugiunculus changed the outcome | times it fired |
 |---|---|---|
 | Haiku 4.5 | 10 / 10 | every group |
 | Sonnet | 2 / 10 | 7 blocks, 2 insisted |
@@ -142,7 +144,7 @@ That third row is the one to read carefully. **On Opus, squint fired zero times.
 
 Opus spent the fewest tokens of the three — 398,611, 29% below Haiku. **Tokens are not the bill, though.** At list prices ($1/MTok for Haiku 4.5, $2 for Sonnet 5, $5 for Opus 5) the same 50 questions cost:
 
-| model | with squint | without | squint saves |
+| model | with Pugiunculus | without | Pugiunculus saves |
 |---|---|---|---|
 | Haiku 4.5 | **$0.56** | $0.82 | **32%** |
 | Sonnet 5 | $0.99 | $1.21 | 18% |
@@ -150,13 +152,13 @@ Opus spent the fewest tokens of the three — 398,611, 29% below Haiku. **Tokens
 
 *(Approximate: the harness reports one total per agent, not an input/output/cache split. Output was five lines per run, so almost all of it is input, priced at the input rate.)*
 
-So the ranking flips when you count money instead of tokens. **Haiku with squint was the cheapest way to get all 50 answers right — 3.6× cheaper than Opus, at identical accuracy.** Opus is more efficient per task and still costs far more per task.
+So the ranking flips when you count money instead of tokens. **Haiku with Pugiunculus was the cheapest way to get all 50 answers right — 3.6× cheaper than Opus, at identical accuracy.** Opus is more efficient per task and still costs far more per task.
 
-**Which is the case for squint, not against it.** The cheap model is the one you run in bulk, it is the one that opens whole files, and it is where squint saves the most: a third of the bill. On Opus it saves 2% and never fires — so if every agent you run is Opus, do not install this.
+**Which is the case for Pugiunculus, not against it.** The cheap model is the one you run in bulk, it is the one that opens whole files, and it is where Pugiunculus saves the most: a third of the bill. On Opus it saves 2% and never fires — so if every agent you run is Opus, do not install this.
 
 ### Telling the agent doesn't work. Stopping it does.
 
-Same 50 questions, squint **off** in both arms. One arm got a line at the top of the prompt: *"you read whole files 19% of the time; a targeted read costs about 30× less."*
+Same 50 questions, Pugiunculus **off** in both arms. One arm got a line at the top of the prompt: *"you read whole files 19% of the time; a targeted read costs about 30× less."*
 
 | | tokens | how often it worked |
 |---|---|---|
@@ -176,22 +178,22 @@ This section exists because the benchmark that only shows wins is not a benchmar
 
 **Tasks that genuinely need the whole file.** 10 "list every exported function in this file" tasks, scored on how many items were actually found:
 
-| | with squint | without |
+| | with Pugiunculus | without |
 |---|---|---|
 | recall | **97.9%** | **99.5%** |
 | tokens | 326,932 | 620,978 |
 
-Eight tasks tied, one was worse with squint, one was better. The one real loss: 9 of 13 constants found instead of 13 of 13. squint doesn't hide anything — it shifts the work onto the agent's ability to search, and a small model searches imperfectly.
+Eight tasks tied, one was worse with Pugiunculus, one was better. The one real loss: 9 of 13 constants found instead of 13 of 13. Pugiunculus doesn't hide anything — it shifts the work onto the agent's ability to search, and a small model searches imperfectly.
 
-**Strong models need it less.** Sonnet already reads well: squint changed the outcome in only 2 groups out of 10. But in those two it saved ~70,000 tokens each. Sonnet also *insisted* (asked twice and got the file) 2 times out of 9 blocks. Haiku never did — the escape hatch is used by the models that know when they need it.
+**Strong models need it less.** Sonnet already reads well: Pugiunculus changed the outcome in only 2 groups out of 10. But in those two it saved ~70,000 tokens each. Sonnet also *insisted* (asked twice and got the file) 2 times out of 9 blocks. Haiku never did — the escape hatch is used by the models that know when they need it.
 
 **The fan-out hook buys a fifth of what hand-batching does.** Batching by hand cut 63%; the refusal, on the same kind of task, cut 10–12%, because the model folds five questions into two agents, not twenty-five into one. And it adds a third to the wall-clock: two refused waves before the work starts.
 
-**Model choice beats every hook.** No hook can see that you picked an expensive model for mechanical work — that decision is already made by the time a tool call exists. Haiku with squint answered all 50 questions for $0.56; Opus, needing neither hook, cost $1.99 for the same answers. No hook can fix that for you.
+**Model choice beats every hook.** No hook can see that you picked an expensive model for mechanical work — that decision is already made by the time a tool call exists. Haiku with Pugiunculus answered all 50 questions for $0.56; Opus, needing neither hook, cost $1.99 for the same answers. No hook can fix that for you.
 
-**Claude Code already blocks exact duplicate re-reads** natively. squint is about the first read, not the second.
+**Claude Code already blocks exact duplicate re-reads** natively. Pugiunculus is about the first read, not the second.
 
-**Effort levels change nothing here.** The obvious cheaper lever would be to raise the agent's reasoning budget and hope it picks Grep on its own. Tested: 20 more Haiku runs with squint off, `effortLevel` set to `low` for one batch and `xhigh` for the other.
+**Effort levels change nothing here.** The obvious cheaper lever would be to raise the agent's reasoning budget and hope it picks Grep on its own. Tested: 20 more Haiku runs with Pugiunculus off, `effortLevel` set to `low` for one batch and `xhigh` for the other.
 
 | | tokens | whole-file reads | correct |
 |---|---|---|---|
@@ -207,15 +209,68 @@ Either way the practical answer is the same: **turning that dial did not stop a 
 
 ---
 
+## The notebook: cut the conversation, keep the thread
+
+The hooks above stop waste on its way in. This part is about what is already in.
+
+**Claude Code sends the whole conversation with every request.** Over one week of real sessions (20 of them, 2,948 requests — `node measure-context.cjs` does the same on yours), re-reading the conversation was **73% of what the sessions cost**. The median request carried 274k tokens of it; one in ten carried 691k. Not one session was ever compacted, because a 1M window never fills. And the prompts typed by the human, every word of them, were **0.15%**.
+
+So the lever is not the prompt. It is how much gets re-read, and the only way to shrink that is to cut: `/autocompact 250k` makes Claude Code summarize the conversation whenever it passes 250k tokens, and `/clear` drops it entirely. The catch is what a cut forgets — and a summary written by the model is exactly where a "don't touch arena.ts" goes missing.
+
+The notebook is what survives the cut. Hooks write it, not the model:
+
+- **the requests, word for word** — they are small enough that nothing needs summarizing
+- **the files Claude changed**, taken from the tool calls themselves
+- **one line of what was done**: the first line of each answer that changed a file
+
+After a compaction, a `/clear` or a resume, a `SessionStart` hook puts it back into the context. That is all. There is no rule for the model to follow and nothing for it to remember to update — which matters, because [telling the agent doesn't work](#telling-the-agent-doesnt-work-stopping-it-does).
+
+```
+# Session notebook — KittenCare
+## Requests, verbatim, oldest first
+- [10:02] quando un gattino mangia deve fare un verso. Non toccare arena.ts
+- [10:40] è troppo forte, abbassalo
+## Files changed
+src/cat.ts, src/audio.ts
+## Done
+- [10:38] Aggiunto il verso quando il gattino mangia.
+```
+
+It lives in `~/.claude/pugi/notebook/`, one per session, never in your repo: `<project>-<id>.md` to read, a `.jsonl` record behind it. `/clear` hands the notebook on to the session it starts, and a commit prints a one-line reminder that `/clear` now starts light. Every hook call costs about 64 ms. It is off by default:
+
+```bash
+node install.cjs --notebook
+```
+
+### Does it work? Not yet, and here is the table that says so
+
+33 long sessions on a 40,000-line codebase. Each one opens with two things that have to last — a tag every answer must start with, and a codename asked for at the very end — plus a large read, then fourteen exact-value questions, one per turn, then the codename. Three arms, identical questions: **today** (Claude Code as it ships), **cut** (`--autocompact 100k`, the smallest window allowed), **notebook** (the same cut, with the notebook put back). Haiku 4.5 at its default, Sonnet 5 and Opus 5 at all five effort levels, one session per cell. $67 of model time.
+
+| | correct | codename kept | tag kept | sessions cut |
+|---|---|---|---|---|
+| today | 100% | 100% | 74% | 0 / 11 |
+| cut | 99% | 91% | 84% | 9 / 11 |
+| notebook | 100% | 100% | 81% | 10 / 11 |
+
+**The mechanism does work.** 26 compactions fired at a median of 68k tokens, left 6k behind, and took 102 seconds each. The notebook went back into the context on every single cut — 13 injections for 13 cuts — with no instruction for the model to follow.
+
+**The memory probe can't see anything through the noise.** Read the `tag` column: the *today* arm never cuts anything and still loses the standing rule a quarter of the time. On Sonnet it swings between 1/8 and 8/8 with no cut in sight, so it is measuring how consistently a model follows an old instruction, not what a cut costs. On Opus there was nothing to lose in the first place: 8/8 in all fifteen sessions, cut or not.
+
+**The cost question is not answered here either.** Pooled over the five efforts: Sonnet $1.98 today against $1.69 with the notebook, Opus $2.45 against $2.59, Haiku $1.25 against $0.67. But the same Haiku arm, same questions, run twice, cost $0.73 and $1.25 — a spread wider than every difference in that list. Cutting pays in proportion to how far a session runs past the threshold, and sixteen turns do not run past it: the median request in a real session carries 274k tokens, which this benchmark never approaches.
+
+So it ships **off**, and stays off until a benchmark shaped like a real session — dozens of turns, context in the hundreds of thousands, repeated runs — says otherwise. What it has earned so far is narrow and worth stating exactly: it costs no accuracy (100% correct, 100% codename, in every arm it ran), it costs 64 ms per hook call, and it was the only arm that never lost the codename after a cut. That is not a win. It is a mechanism that works, waiting for the measurement that would justify turning it on.
+
+---
+
 ## Measure your own history before you install
 
-squint ships with the tool that produced these numbers. Point it at your own logs:
+Pugiunculus ships with the tool that produced these numbers. Point it at your own logs:
 
 ```bash
 node measure.cjs
 ```
 
-It replays your entire Claude Code history and tells you how many whole-file reads squint would have blocked, how many tokens were at stake, and — the part most tools skip — **how often it would have got in your way**: blocks per session, median and worst case.
+It replays your entire Claude Code history and tells you how many whole-file reads Pugiunculus would have blocked, how many tokens were at stake, and — the part most tools skip — **how often it would have got in your way**: blocks per session, median and worst case.
 
 ```bash
 node measure.cjs --sweep     # compare 4 / 8 / 16 / 32 / 64 KB thresholds
@@ -225,7 +280,7 @@ Nothing is uploaded. No API calls. It reads `~/.claude/projects` and prints numb
 
 On the 607-session history this was built from: 734 reads would have been blocked, 3.5M tokens at stake, median 2 blocks per session, worst case 15.
 
-**The trade, in one line:** a blocked read is worth ~4,800 tokens. A pointless block costs ~85 (the refusal, then you read it anyway). squint pays for itself if it is right **more than 1.9% of the time**.
+**The trade, in one line:** a blocked read is worth ~4,800 tokens. A pointless block costs ~85 (the refusal, then you read it anyway). Pugiunculus pays for itself if it is right **more than 1.9% of the time**.
 
 ---
 
@@ -235,10 +290,12 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 
 - **Subjects:** fresh subagents, one arm at a time, identical prompts. They were not told an experiment was happening.
 - **Questions:** generated by script from the codebase (`const NAME = <literal>` in files over 12 KB, unique name across the project), with the correct answers extracted from source — never written by hand, never graded by judgement.
-- **Control:** `SQUINT_OFF=1` disables the block while still logging every decision, so the control group's behaviour is counted, not assumed. The fan-out experiment uses `SQUINT_FANOUT_OFF=1` instead, so its control keeps the read and shell hooks on and differs from the treatment in one hook only.
+- **Control:** `PUGI_OFF=1` disables the block while still logging every decision, so the control group's behaviour is counted, not assumed. The fan-out experiment uses `PUGI_FANOUT_OFF=1` instead, so its control keeps the read and shell hooks on and differs from the treatment in one hook only.
 - **Scoring:** exact string match against the extracted answers, quoting normalised.
-- **Everything logged:** `~/.claude/squint/log.jsonl` records every decision — `slice`, `small`, `blocked`, `insisted`, `rebatched`, `escaped`, `off` — so you can tell whether behaviour changed, not just whether the bill did.
+- **Everything logged:** `~/.claude/pugi/log.jsonl` records every decision — `slice`, `small`, `blocked`, `insisted`, `rebatched`, `escaped`, `off` — so you can tell whether behaviour changed, not just whether the bill did.
 - **The fan-out experiment ships:** `node bench/fanout.cjs --src <your codebase> --model haiku --runs 5` runs it against your own code, headless, and `--report` prints the table. The raw rows behind the tables above are in `bench/fanout-results.jsonl` (refuse-until-changed) and `bench/fanout-results-v1.jsonl` (refuse once).
+- **So does the chain benchmark:** `node bench/hard.cjs --src <your codebase> --model haiku` (add `--off` for the control, `--per 25` for the long sessions, `--list` to see the questions) and `--report`. Its rows are in `bench/hard-results-*.jsonl`, one file per arm.
+- **So does the notebook experiment:** `node bench/notebook.cjs --src <your codebase> --models sonnet --efforts high --sessions 1` runs all three arms — today, cut, notebook — and `--report` prints the table. Unlike the other two it drives one session over many turns (`--input-format stream-json`) instead of a one-shot prompt, which is the only way a context grows enough to be cut. Rows in `bench/notebook-results.jsonl`.
 - **The hooks are tested:** `node --test test.cjs` feeds each one the JSON Claude Code would and checks every decision on this page — including five hooks fired at the same instant.
 
 ---
@@ -247,23 +304,24 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 
 | | |
 |---|---|
-| `SQUINT_THRESHOLD_BYTES` | when to start blocking, `Read` and shell alike (default `8000`) |
-| `SQUINT_BASH_LINES` | a `head` / `sed` range wider than this counts as the whole file (default `500`) |
-| `SQUINT_FANOUT_MIN` | how many small agents in a row make a batch wasteful (default `4`) |
-| `SQUINT_FANOUT_CHARS` | median prompt under this is "small" (default `1500`) |
-| `SQUINT_FANOUT_GAP` | seconds of quiet that end a batch (default `60`) |
-| `SQUINT_FANOUT_VALVE` | refused waves in a row before one is let through anyway (default `3`) |
-| `SQUINT_FANOUT_ESCAPE=1` | offer `[separate context]` as a way through the fan-out refusal — off by default, Sonnet used it as a bypass 4 times out of 5 |
-| `SQUINT_OFF=1` | disable every block, keep the log — for your own A/B |
-| `SQUINT_READ_OFF=1` · `SQUINT_BASH_OFF=1` · `SQUINT_FANOUT_OFF=1` | disable one hook only, so a control group differs in one thing |
-| `~/.claude/squint/OFF` | same, as a file — subagents do not inherit your shell, so this is the one that gives you a real control group |
-| `SQUINT_LOG=0` | turn the log off entirely |
+| `PUGI_THRESHOLD_BYTES` | when to start blocking, `Read` and shell alike (default `8000`) |
+| `PUGI_BASH_LINES` | a `head` / `sed` range wider than this counts as the whole file (default `500`) |
+| `PUGI_FANOUT_MIN` | how many small agents in a row make a batch wasteful (default `4`) |
+| `PUGI_FANOUT_CHARS` | median prompt under this is "small" (default `1500`) |
+| `PUGI_FANOUT_GAP` | seconds of quiet that end a batch (default `60`) |
+| `PUGI_FANOUT_VALVE` | refused waves in a row before one is let through anyway (default `3`) |
+| `PUGI_FANOUT_ESCAPE=1` | offer `[separate context]` as a way through the fan-out refusal — off by default, Sonnet used it as a bypass 4 times out of 5 |
+| `PUGI_OFF=1` | disable every block, keep the log — for your own A/B |
+| `PUGI_READ_OFF=1` · `PUGI_BASH_OFF=1` · `PUGI_FANOUT_OFF=1` | disable one hook only, so a control group differs in one thing |
+| `~/.claude/pugi/OFF` | same, as a file — subagents do not inherit your shell, so this is the one that gives you a real control group |
+| `PUGI_LOG=0` | turn the log off entirely |
+| `node install.cjs --notebook` | add the [session notebook](#the-notebook-cut-the-conversation-keep-the-thread) — off by default, kept by later installs; `--no-notebook` takes it out |
 
 ```bash
 node install.cjs --uninstall
 ```
 
-Your `settings.json` is backed up to `settings.json.backup-squint` before anything is written.
+Your `settings.json` is backed up to `settings.json.backup-pugi` before anything is written.
 
 Why 8 KB: swept 4 / 8 / 16 / 32 / 64 KB over 607 real sessions. 8 KB keeps 91% of the tokens at stake with 26% fewer blocks than 4 KB. Above 64 KB nothing fires at all, because `Read` truncates its own results around 16k tokens.
 
@@ -271,7 +329,7 @@ Why 8 KB: swept 4 / 8 / 16 / 32 / 64 KB over 607 real sessions. 8 KB keeps 91% o
 
 ## What this is not
 
-It is not a framework, a memory layer, or a context manager. It is three hooks, about 560 lines together, that stop three specific wastes — and a measurement tool so you can check whether they stopped anything on *your* machine.
+It is not a framework or a memory system. It is three hooks that stop three specific wastes and one that writes down three kinds of facts and hands them back after a cut — about 830 lines together — plus two measurement tools, so you can check whether any of it moved the number on *your* machine.
 
 If the number doesn't move for you, uninstall it. That's what the measurement is for.
 

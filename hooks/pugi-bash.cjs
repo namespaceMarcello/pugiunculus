@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * squint-bash — closes the back door.
+ * pugi-bash — closes the back door.
  *
  * The read hook stops `Read(file)`. It does nothing about `cat file`, which
  * dumps the same tokens into the same context through the shell. In the logs
@@ -26,11 +26,11 @@
  * reaches for those after a refusal has decided it needs the file.
  *
  * Config:
- *   SQUINT_THRESHOLD_BYTES  default 8000  — same knob as the read hook
- *   SQUINT_BASH_LINES       default 500   — ranges wider than this count as "whole file"
- *   SQUINT_OFF=1, or ~/.claude/squint/OFF — disable, keep logging
- *   SQUINT_BASH_OFF=1       — disable only this hook
- *   SQUINT_LOG=0            — no decision log
+ *   PUGI_THRESHOLD_BYTES    default 8000  — same knob as the read hook
+ *   PUGI_BASH_LINES         default 500   — ranges wider than this count as "whole file"
+ *   PUGI_OFF=1, or ~/.claude/pugi/OFF — disable, keep logging
+ *   PUGI_BASH_OFF=1         — disable only this hook
+ *   PUGI_LOG=0              — no decision log
  *
  * NOTE: if you run a tool that compresses shell output (rtk, headroom, ...),
  * your `cat` may already be cheap. Measure before installing this one.
@@ -40,14 +40,14 @@ const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 
-const THRESHOLD = Number(process.env.SQUINT_THRESHOLD_BYTES) || 8000
-const MAX_LINES = Number(process.env.SQUINT_BASH_LINES) || 500
+const THRESHOLD = Number(process.env.PUGI_THRESHOLD_BYTES) || 8000
+const MAX_LINES = Number(process.env.PUGI_BASH_LINES) || 500
 
 const HOME = os.homedir()
-const DIR = path.join(HOME, '.claude', 'squint')
+const DIR = path.join(HOME, '.claude', 'pugi')
 const LOG = path.join(DIR, 'log.jsonl')
 const OFF_SWITCH = path.join(DIR, 'OFF')
-const STATE = path.join(os.tmpdir(), 'squint-state')
+const STATE = path.join(os.tmpdir(), 'pugi-state')
 
 function exit(payload) {
   if (payload) process.stdout.write(JSON.stringify(payload))
@@ -55,7 +55,7 @@ function exit(payload) {
 }
 
 function note(row) {
-  if (process.env.SQUINT_LOG === '0') return
+  if (process.env.PUGI_LOG === '0') return
   try {
     fs.mkdirSync(DIR, { recursive: true })
     fs.appendFileSync(LOG, JSON.stringify(row) + '\n')
@@ -185,7 +185,7 @@ function run(ev) {
     bytes: hit.bytes,
   }
 
-  if (process.env.SQUINT_OFF === '1' || process.env.SQUINT_BASH_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
+  if (process.env.PUGI_OFF === '1' || process.env.PUGI_BASH_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
     note({ ...base, decision: 'off' })
     return
   }

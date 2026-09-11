@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * squint measure — run this BEFORE installing anything.
+ * pugi measure — run this BEFORE installing anything.
  *
  * It reads your own Claude Code transcripts (~/.claude/projects) and replays
- * what squint would have done. No API calls, nothing leaves your machine,
+ * what pugi would have done. No API calls, nothing leaves your machine,
  * nothing is written except an optional JSON summary.
  *
  * Usage:
@@ -13,7 +13,7 @@
  *
  * Caveat, stated up front: Read truncates its result around 16k tokens, so this
  * replay uses result size as a stand-in for file size. It therefore UNDERSTATES
- * how often squint would fire on very large files.
+ * how often pugi would fire on very large files.
  */
 
 const fs = require('node:fs')
@@ -132,7 +132,7 @@ function simulate(thresholdTokens) {
       }
       if (ev.tokens <= thresholdTokens) continue
       if ((seen[ev.f] || 0) >= 1) {
-        seen[ev.f] = 0 // insisted: squint lets it through
+        seen[ev.f] = 0 // insisted: pugi lets it through
         continue
       }
       seen[ev.f] = 1
@@ -195,7 +195,7 @@ function simulate(thresholdTokens) {
     console.log('YOUR HISTORY, REPLAYED')
     console.log('  Read calls                 ' + main.reads)
     console.log('  already sliced             ' + main.slices + '  (' + pct(main.slices, main.reads) + ')')
-    console.log('  squint would have blocked  ' + main.blocked + '  (' + pct(main.blocked, main.reads) + ')')
+    console.log('  pugi would have blocked    ' + main.blocked + '  (' + pct(main.blocked, main.reads) + ')')
     console.log('  tokens at stake            ' + main.tokensAtStake.toLocaleString('en-US'))
     console.log('')
     console.log('FRICTION — what it would have cost you')
@@ -209,12 +209,12 @@ function simulate(thresholdTokens) {
       console.log('THE TRADE')
       console.log('  a blocked read is worth    ' + perBlock.toLocaleString('en-US') + ' tokens')
       console.log('  a pointless block costs    ' + costOfABlock + ' tokens (the refusal, then you read it anyway)')
-      console.log('  => squint pays for itself if it is right more than ' + breakeven + '% of the time')
+      console.log('  => pugi pays for itself if it is right more than ' + breakeven + '% of the time')
     }
     console.log('')
     const t = measureToll()
     if (t) {
-      const dir = path.join(os.homedir(), '.claude', 'squint')
+      const dir = path.join(os.homedir(), '.claude', 'pugi')
       try {
         fs.mkdirSync(dir, { recursive: true })
         fs.writeFileSync(path.join(dir, 'toll.json'), JSON.stringify({ toll: t.toll, samples: t.samples, measuredAt: new Date().toISOString() }, null, 2))
@@ -225,7 +225,7 @@ function simulate(thresholdTokens) {
       console.log('  typical agent                 ' + t.median.toLocaleString('en-US') + ' tokens   (' + t.samples + ' samples)')
       console.log('  => every extra agent costs at least that much before doing anything.')
       console.log('     This number is yours, not a constant: it depends on your plugins,')
-      console.log('     MCP servers and CLAUDE.md. squint quotes it back to you when it blocks.')
+      console.log('     MCP servers and CLAUDE.md. pugi quotes it back to you when it blocks.')
     }
     console.log('Run with --sweep to tune the threshold to your own habits.')
   }
