@@ -46,7 +46,7 @@ if (opt('report')) {
     .map((l) => JSON.parse(l))
   const groups = {}
   // Rows written before the hatch became opt-in carry `noEscape` instead of `escape`.
-  const escaped = (r) => (r.escape !== undefined ? r.escape : r.noEscape === false)
+  const escaped = (r) => (r.escape !== undefined ? r.escape : r.noEscape !== true)
   for (const r of rows) (groups[(r.model + (r.off ? ' · hook off' : escaped(r) ? ' · on, escape' : ' · hook on')).padEnd(18)] ||= []).push(r)
   const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
   console.log('arm                 runs  fired  reaction after the refusal        spawns  tokens/run   $/run  minutes  correct')
