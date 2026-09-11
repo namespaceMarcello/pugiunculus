@@ -2,12 +2,13 @@
 
 **Your coding agent opens a 21,000-token file to read ten lines. Then carries it for the rest of the session.**
 
-squint is two hooks that stop the two biggest ways a coding agent burns tokens on nothing:
+squint is three hooks that stop the ways a coding agent burns tokens on nothing:
 
 - **opening a whole file** to read ten lines — 21,163 tokens where 614 would do
-- **spawning ten small subagents** where two would do — each one pays ~30,000 tokens before it does any work
+- **`cat BIG` instead** — the same waste through the shell, which is where most of it actually happens
+- **spawning ten small subagents** where two would do — each pays a fixed entry cost before doing any work
 
-Both refuse once and explain the cost. If the agent really needs it, it asks again and gets it.
+Each refuses once and explains the cost. If the agent really needs it, it asks again and gets it.
 
 ```bash
 git clone https://github.com/namespaceMarcello/squint && node squint/install.cjs
@@ -51,6 +52,14 @@ The agent knows how to do the second one. It just doesn't, unless something stop
 ```
 
 One refusal, two targeted calls, same answer. The agent needed no instruction beyond the refusal itself — and if it had actually needed all 1,822 lines, repeating the Read would have handed them over.
+
+## The back door
+
+Blocking `Read` does nothing about `cat file`, which puts the same tokens in the same context through the shell. In the logs this was built from, **Bash out-consumed Read** — 7.08M tokens against 5.85M — with `cat` alone at 693 calls and 1.5M, and wide `sed -n` ranges another 1.6M.
+
+The third hook closes it: `cat BIG`, `type BIG`, `Get-Content BIG`, `head -n 5000 BIG`, `sed -n '1,4000p' BIG`. It is deliberately conservative — a pipe or redirect (`cat x | grep y`) is allowed, because that output was never going to be large, and a narrow `sed -n '100,140p'` is exactly the behaviour we want.
+
+> If you already run something that compresses shell output (rtk, headroom, …), your `cat` may be cheap already. Measure before installing this one.
 
 ## The other thing it stops
 
@@ -216,7 +225,7 @@ Why 8 KB: swept 4 / 8 / 16 / 32 / 64 KB over 607 real sessions. 8 KB keeps 91% o
 
 ## What this is not
 
-It is not a framework, a memory layer, or a context manager. It is two hooks, under 300 lines together, that stop two specific wastes — and a measurement tool so you can check whether they stopped anything on *your* machine.
+It is not a framework, a memory layer, or a context manager. It is three hooks, under 450 lines together, that stop three specific wastes — and a measurement tool so you can check whether they stopped anything on *your* machine.
 
 If the number doesn't move for you, uninstall it. That's what the measurement is for.
 

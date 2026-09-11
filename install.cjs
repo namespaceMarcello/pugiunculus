@@ -28,10 +28,15 @@ const ENTRIES = [
     file: 'squint-agents.cjs',
     what: 'blocks the next fan-out after a wasteful batch of subagents',
   },
+  {
+    matcher: 'Bash|PowerShell',
+    file: 'squint-bash.cjs',
+    what: 'blocks `cat BIG` and friends — the same waste through the shell',
+  },
 ]
 
 const isOurs = (entry) =>
-  (entry.hooks || []).some((h) => /squint(-agents)?\.cjs/.test(String(h.command || '')))
+  (entry.hooks || []).some((h) => /squint(-agents|-bash)?\.cjs/.test(String(h.command || '')))
 
 let settings = {}
 try {
