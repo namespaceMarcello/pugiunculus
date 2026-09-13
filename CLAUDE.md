@@ -48,7 +48,7 @@ replaced, not appended. This file: 200 lines.
 | Question about… | Open |
 |---|---|
 | what each hook blocks, and the numbers behind it | `README.md` |
-| the pruner — what it must do, and what it is worth | `docs/potatore.md` |
+| the pruner — why it is closed, and what replaced it | `docs/potatore.md` |
 | what the harness, skills and plugins inject before any tool runs, and what it costs — **open, to think about** | `docs/privately.md` |
 | where the project stands: decisions, defects, next steps | `docs/STATO.md` |
 | what was done, and when | `docs/archivio/FATTO.md` |
@@ -63,10 +63,14 @@ node test.cjs                     # 38 tests: every hook decision, fed the JSON 
 node install.cjs                  # the three blockers into ~/.claude/settings.json
 node install.cjs --notebook       # add the session notebook (off by default)
 node measure.cjs                  # what whole-file reads cost in your own history
-node measure-context.cjs          # where a session's tokens go, by category
+node measure-context.cjs          # where a session's cost goes: re-reading, cache writes, output, prompts
+node measure-context.cjs --tools  # which tools' results weigh most, and what the big Reads were
+node measure-context.cjs --fixed  # skills, commands, agents, MCP servers listed on every move and never used
+node measure-context.cjs --split  # what a request carries, by category: fixed part, your words, tool results, the model's moves
 node bench/fanout.cjs --report    # the fan-out experiment
 node bench/hard.cjs --report      # the chain experiment
 node bench/notebook.cjs --report  # today vs cut vs notebook, per model and effort
+node bench/prune-sim.cjs          # the ceiling of clearing old tool results, replayed on your own transcripts
 ```
 
 `node test.cjs` must be green before a commit.

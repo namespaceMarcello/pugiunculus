@@ -31,9 +31,14 @@ Three groups, and only two of them can be touched:
 
 ## What is worth thinking about before touching anything
 
-- Whether the fixed part can be measured per user automatically. `measure.cjs`
-  already reads the user's own logs; it could report which skills, plugins and MCP
-  servers never appear in N days of history.
+- The fixed part is now measured per user, as sent: `node measure-context.cjs
+  --fixed` reads the attachment records a transcript keeps of what the harness
+  listed at session start — every skill with its line, the agent types, each
+  MCP server's instructions and the names of its deferred tools, the context a
+  hook added, the system prompt itself — and counts how often the window's
+  sessions used each one. What a plugin or a claude.ai connector adds is
+  marked as yours to switch off; the rest is built in. A tool that is not
+  deferred costs its whole schema, which the transcript does not show.
 - Whether switching them off should ever be automatic. Turning off a plugin
   changes what the agent can do: a wrong call here costs more than the tokens it
   saves. A report the user acts on may be the honest ceiling.

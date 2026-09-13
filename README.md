@@ -280,6 +280,18 @@ Nothing is uploaded. No API calls. It reads `~/.claude/projects` and prints numb
 
 On the 607-session history this was built from: 734 reads would have been blocked, 3.5M tokens at stake, median 2 blocks per session, worst case 15.
 
+Three more readings of the same logs, same rules:
+
+```bash
+node measure-context.cjs          # where a session's cost goes: re-reading the conversation, cache writes, output, your prompts
+node measure-context.cjs --tools  # which tools' results weigh most, and what the big Reads were (slices, insisted, hook off)
+node measure-context.cjs --fixed  # every skill, command, agent and MCP server listed to the model on each move, and which ones you never use
+node measure-context.cjs --split  # what a request carries, by category: the fixed part, your words, tool results, the model's text, calls and thinking
+node bench/prune-sim.cjs          # what clearing old tool results would save, replayed on your sessions, cache re-writes included
+```
+
+The last one exists because the obvious next hook — prune tool results after the fact — cannot be a hook at all, and the replay says what a proxy would be worth before one is written. The reasons are in `docs/potatore.md`.
+
 **The trade, in one line:** a blocked read is worth ~4,800 tokens. A pointless block costs ~85 (the refusal, then you read it anyway). Pugiunculus pays for itself if it is right **more than 1.9% of the time**.
 
 ---

@@ -1,90 +1,96 @@
-# The pruner (*potatore*) — design note, not built yet
+# The pruner (*potatore*) — closed, not built
+
+Decided 2026-09-13. This note keeps the idea and the reasons it was dropped, so it
+is not reopened without a new fact.
+
+## The idea
 
 What Pugiunculus stops today is waste at the door: a whole-file `Read`, a
-`cat BIG`, a fan-out of small subagents. This note is about the next hook, and it
-comes from one measurement: **what actually fills a session is not the prompts,
-it is the material the work produces, and it never leaves again.**
+`cat BIG`, a fan-out of small subagents. The pruner was to be the next hook,
+from one observation that is still true: **what fills a session is not the
+prompts, it is the material the work produces, and it never leaves again.**
+Re-reading the conversation is 73% of what a session costs; the median request
+carries 274k tokens; the words the human typed are 0.6% of the payload.
 
-## What the numbers say
+Two hooks were proposed:
 
-Measured on one real session (`node measure-context.cjs` repeats it on any
-history; the per-category split is in the same shape):
+- `PostToolUse` replacing a tool result with what matters plus a pointer to the
+  raw thing on disk — the failures of a test run instead of the run, the matching
+  section of a page instead of the page.
+- `PreToolUse` rewriting a call instead of refusing it — a whole-file `Read`
+  becoming a slice or a `Grep`, so the refusal's round trip is not paid.
 
-| | |
+## Why it is closed
+
+Three findings, each enough on its own.
+
+**1. The hook API cannot do it.** A `PostToolUse` hook cannot replace the output
+of a built-in tool (`Read`, `Bash`, `Grep`, `WebFetch`): the documentation says
+so explicitly, it can only add context. The one field that replaces output,
+`updatedMCPToolOutput`, applies to MCP tools only. `PreToolUse` `updatedInput`
+changes the parameters of the same tool; it cannot turn a `Read` into a `Grep`.
+No event can touch a result already in the conversation.
+
+**2. The weight is not where the note looked for it.** Measured on 34 interactive
+sessions over 14 days (`node measure-context.cjs --tools` repeats it):
+
+| tool | share of tool-result tokens |
 |---|---|
-| sent on every move, at the end of a working day | **514k tokens** |
-| fixed part (system prompt, tool definitions, CLAUDE.md, memory) | 55k, present from the first move |
-| tool results (files read, command output, fetched pages) | ~110k |
-| the model's own moves (answers, tool calls, reasoning) | ~100k |
-| what the harness injects around it (reminders, hook output, loaded skills) | ~120k |
-| **everything the human typed** | **3k — 0.6%** |
+| `Bash` | 61% |
+| `Read` | 19% |
+| `WebFetch` | 2% |
+| MCP tools, all together | 2% |
 
-Re-reading that conversation is **73% of what the session costs**, the median
-request carries 274k tokens, and one in ten carries 691k.
+`Bash` is volume, not blocks: ~3,800 calls of ~350 tokens, already filtered by
+RTK. Of the 54 `Read` results above 2k tokens, three quarters were slices the
+agent asked for with offset and limit, six were whole files read before the
+hook was installed, two were insisted. The existing blocker works; "a `Read`
+nobody sliced" is no longer a problem. 69% of all tool-result tokens sit in
+results under 2k tokens — block-level pruning has little to bite. The one output
+a hook may replace (MCP) is 2% of the total. And `WebFetch` already answers the
+prompt with a small model instead of returning the page.
 
-Two consequences, and the second is the one that decides the design:
+**3. The mechanism does not answer the diagnosis.** The diagnosis is an artifact
+that stays after its purpose is spent. A hook acts before the model has seen
+the result, when nobody knows which six lines will matter; the 19.8k saved in
+the original example was a retroactive operation, and no hook can do one. A
+fixed rule at the door (only the `FAIL` lines of a test run) is the wrong prune
+the note itself called decisive, and its cost is not only the re-run: a cut that
+drops the warning the agent needed produces a wrong answer, not a retry.
 
-1. Shorter prompts change nothing. There is nothing to win there.
-2. **Compression belongs at the level of blocks, not words.** A fetched page in
-   that session was 20k tokens and six lines of it were used. Squeezing its prose
-   would have saved ~3k; dropping it after taking the six lines saves 19.8k. The
-   waste is whole artifacts that stay in the conversation long after their purpose
-   is spent.
+A fourth point about the note itself: its cost table (55k + 110k + 100k + 120k
++ 3k) summed to 388k, not the 514k it claimed, and no script in the repo
+produced the per-category split it cited. Numbers that justify a hook must come
+from a committed script.
 
-## What the pruner must do
+## What a hook cannot do, a proxy could — at a price
 
-Two hooks, both automatic, no user action, nothing to remember:
+Retroactive pruning needs to see the whole request: a local proxy on
+`ANTHROPIC_BASE_URL`, or a rewrite of the session transcript before a resume.
+Both are possible; both meet the cache. With the 1-hour cache TTL, editing the
+prefix at a point P re-writes everything after P at 2× where it was read at
+0.1×. Break-even is 19 × (tail after the cut) / (tokens removed) requests: a
+20k page cut with 200k behind it pays back after 190 requests, more than a
+session has. Pruning pays only when rare, large and batched — the shape
+auto-compaction already has. Whether "clear old tool results" beats "summarize
+everything" is the notebook's question, and its benchmark could not answer it.
 
-- **`PostToolUse` → `updatedToolOutput`.** Replace a tool result with what matters
-  plus a pointer, before it ever enters the conversation: the failures of a test
-  run instead of the whole run, the matching section of a page instead of the
-  page. The raw thing is written to disk and the pointer says where, so a second
-  look costs one targeted read instead of a refetch.
-- **`PreToolUse` → `updatedInput`.** Rewrite the call instead of refusing it: a
-  whole-file `Read` becomes a sliced read or a `Grep`. The three current blockers
-  refuse and make the agent ask again, which costs a round trip every time; a
-  rewrite costs none and cannot be argued with.
+`bench/prune-sim.cjs` replays real transcripts under such policies and puts a
+ceiling on the saving before any proxy is written. The proxy is decided on that
+number, and on whether a subscription login may go through a gateway at all.
 
-## What it must never do
+## What replaced it
 
-- Touch exact paths, line numbers, identifiers or error strings. Those are what
-  the agent works from; a paraphrase of a stack trace is a bug generator.
-- Prune the user's words. Ever. They are 0.6% of the payload and the only part
-  that cannot be rebuilt.
-- Prune silently: every decision goes to `~/.claude/pugi/log.jsonl`, on and off,
-  like the other hooks.
+- `node measure-context.cjs --tools` — which tools weigh most in your own
+  history, and what the big `Read`s were.
+- `node bench/prune-sim.cjs` — the ceiling of retroactive pruning, and whether
+  the harness already clears old results on its own.
+- `node measure-context.cjs --fixed` — the block that travels on every move:
+  skills, plugins and MCP servers your logs never use. See `docs/privately.md`.
+- `node measure-context.cjs --split` — the per-category table this note
+  claimed and could not reproduce, from the transcripts, against what the API
+  billed.
 
-## Where the notebook fits
-
-The notebook (`hooks/pugi-notebook.cjs`, already built, off by default) was
-justified by a bet that is not yet won — that cutting the conversation pays. The
-pruner gives it a second job that pays on every tool call:
-
-- **It is the index of what the pruner threw away.** The pointer the pruner leaves
-  inline dies with the first context cut; the notebook entry does not.
-- **It tells the pruner what not to prune.** It already holds the current requests
-  and the files being touched: prune lightly anything that matches the work in
-  flight, heavily everything else. A local, deterministic relevance signal that
-  costs no model call.
-- **It makes the re-read targeted.** "Page X, saved at Y, used for Z" turns a
-  refetch into one sliced read.
-
-## Open questions, to settle with a benchmark and not in prose
-
-- Which tools are worth pruning first. Suspects, in order of measured weight:
-  `WebFetch`, `Bash`, `Read` of files nobody sliced.
-- How much to keep, and whether "keep the matching part" can be decided
-  deterministically or needs a cheap model (which would cost a call per tool use —
-  probably fatal).
-- Whether a wrong prune costs more than it saves: the agent re-runs the command,
-  and that is a full round trip. This is the number that decides the design.
-- Whether the installer should also write the auto-compaction window and turn off
-  MCP servers and skills a user's own logs show they never use — the fixed 55k is
-  the largest untouched block, and it travels on every single move.
-
-## How it gets decided
-
-Like everything else here: `bench/notebook.cjs` already drives one long session
-over many turns and measures cost, correctness and what survives. The pruner arm
-is one more arm in that harness. It ships **off** until the rows say otherwise,
-and if they never do, it is deleted.
+What stays from the note: compression at the level of blocks, not words; never
+touch paths, identifiers or error strings; never rewrite the user's words; never
+prune silently.
