@@ -2,3 +2,5 @@ node_modules/
 *.log
 *.backup-*
 out.json
+.claude/settings.local.json
+.claude/worktrees/

@@ -13,7 +13,7 @@ The first two refuse once and explain the cost; if the agent really needs it, it
 For the tokens that are already in, there is also a **notebook**, off by default: it lets the conversation be cut without losing the thread. [Its section](#the-notebook-cut-the-conversation-keep-the-thread) has the numbers.
 
 ```bash
-git clone https://github.com/namespaceMarcello/squint && node squint/install.cjs
+git clone https://github.com/namespaceMarcello/pugiunculus && node pugiunculus/install.cjs
 ```
 
 No restart. No API key. Nothing leaves your machine.
