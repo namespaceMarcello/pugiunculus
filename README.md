@@ -302,6 +302,8 @@ One split can be lucky, so `node bench/effort-score.cjs --check` does it three h
 
 On Fable 5.1 with a subscription, a mid-session effort change keeps the prompt cache; on other models it re-reads the whole conversation once, so do not run this router there.
 
+**The catch, measured the same day.** A skill's `effort:` applies every time when *you* invoke the skill as a slash command, across turns. When the *model* invokes it through the Skill tool — the router's path — it applied 0 times in 2 in fresh sessions and 4 times in 6 in a long interactive one, with no pattern found. `node bench/effort-score.cjs --applied` joins the router's log with the transcripts and counts how often the suggested level became the turn's level: on the author's first two days, 6 of 17, and 2 of those were the session's own level. So the router suggests reliably and lands unreliably. It is a known Claude Code bug — [#81313](https://github.com/anthropics/claude-code/issues/81313): the skill's `effort:` is applied on slash-command invocation and ignored when the model invokes the skill through the Skill tool; [#81318](https://github.com/anthropics/claude-code/issues/81318) reports the same for `model:` and `effort:` since v2.1.220. The router stays opt-in, the number is in `docs/STATO.md`, and the reliable levers remain `/effort` and a typed slash skill until the fix lands.
+
 ### Reading in a lean agent
 
 A file read in the main conversation stays there and is re-read by every later request. Read by a subagent, it is paid once and thrown away with the agent's context; only the answer comes back. The catch is what a subagent pays before reading anything — its own system prompt and tool schemas. Measured on 744 subagents over 14 days: median 24k tokens for the first request, 44k at the 90th percentile.
@@ -316,6 +318,22 @@ A file read in the main conversation stays there and is re-read by every later r
 The whole-file `Read` refusal names it when it is installed. Hand it large reads and explorations across files with a complete brief — which files, what to look for, what shape of answer; open thirty lines yourself.
 
 One number that closed a hook before it was written: `node measure-context.cjs --writes` counts `Write` calls over files the session had already opened, the case where an `Edit` would have carried only the changed lines. 36 calls in 14 days, 111k tokens. A blocker there would move nothing worth its own refusals.
+
+---
+
+## See it while it happens
+
+Two ways to watch the hooks work without opening a log.
+
+**The status line.** `node install.cjs --status` puts one sentence at the bottom of the terminal, refreshed on every event of the session, in the language of the word pack installed:
+
+```
+pugi │ 4 whole-file reads stopped (~14k tokens) · 1 insisted · effort: 3× low, 7× medium, 2× max · 1 read handed to the lean agent (≈39k tokens kept out of the chat)
+```
+
+The tokens of a stopped read are what it would have carried, not a saving; the savings are the measured ones above. The status line you had keeps running: its rows print first, ours after, and `--no-status` gives yours back as it was.
+
+**A recap for you.** With the status line come two sentences from `hooks/pugi-recap.cjs`, returned as `systemMessage`, the field a hook uses to speak to you rather than to the model, so they cost the conversation nothing: after each answer, what the hooks did in that turn, if anything — *Pugiunculus in questo turno: 1 lettura intera fermata (~9k token); effort: 1 volta low.* — and at session start, what they did in the last 24 hours across sessions. The effort router adds its own line under the prompt it judged: `pugi: effort → low (mechanical, short)`. The blockers already show their refusal as the tool's error, so they add nothing.
 
 ---
 

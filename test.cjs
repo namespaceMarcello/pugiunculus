@@ -496,7 +496,9 @@ describe('pugi-effort.cjs — the effort router', () => {
 
   test('the hook suggests a skill for every level but high, and logs it', () => {
     const s = fresh()
-    assert.match(suggested(ask(s, 'commit e push', IT)), /Effort suggested for this turn: low .*effort-low/)
+    const low = ask(s, 'commit e push', IT)
+    assert.match(suggested(low), /Effort suggested for this turn: low .*effort-low/)
+    assert.equal(JSON.parse(low).systemMessage, 'pugi: effort → low (mechanical, short)')
     assert.equal(ask(s, 'perché la cache scade dopo un\'ora?', IT), '')
     assert.deepEqual(decisions(s), ['suggest', 'none'])
   })
@@ -514,6 +516,78 @@ describe('pugi-effort.cjs — the effort router', () => {
     assert.equal(ask(s, '/effort max'), '')
     assert.deepEqual(decisions(s), ['off'])
     assert.equal(call(EF, { session_id: s }), '')
+  })
+})
+
+// ---------------------------------------------------------- pugi-status.cjs
+
+describe('pugi-status.cjs — the status line', () => {
+  const ST = 'pugi-status.cjs'
+  const show = (ev) => call(ST, ev)
+
+  test('reads the log of this session and the numbers Claude Code hands it; nothing of another session', () => {
+    const s = fresh()
+    const other = fresh()
+    fs.mkdirSync(PUGI_DIR, { recursive: true })
+    const rows = [
+      { ts: 't', session: s, file: 'a.ts', decision: 'blocked', bytes: 40000 },
+      { ts: 't', session: s, file: 'a.ts', decision: 'insisted', bytes: 40000 },
+      { ts: 't', session: s, tool: 'Agent', decision: 'blocked' },
+      { ts: 't', session: s, hook: 'effort', decision: 'suggest', level: 'low' },
+      { ts: 't', session: s, hook: 'effort', decision: 'suggest', level: 'low' },
+      { ts: 't', session: s, hook: 'effort', decision: 'none', level: 'high' },
+      { ts: 't', session: other, file: 'b.ts', decision: 'blocked', bytes: 900000 },
+    ]
+    fs.appendFileSync(LOG, rows.map((r) => JSON.stringify(r)).join('\n') + '\n')
+    const out = show({ session_id: s, context_window: { used_percentage: 42.4 }, prompt_cache: { hit_ratio: 0.913 }, cost: { total_cost_usd: 1.234 } })
+    assert.equal(out, 'pugi │ 1 whole-file read stopped (~10k tokens) · 1 insisted · 1 fan-out stopped · effort: 2× low')
+  })
+
+  test('an empty session, and a broken input, still print a line; the status line that was there runs first', () => {
+    assert.equal(show({ session_id: fresh() }), 'pugi │ nothing to stop yet')
+    assert.equal(call(ST, 'not json'), 'pugi │ nothing to stop yet')
+    fs.writeFileSync(path.join(PUGI_DIR, 'status-previous.json'), JSON.stringify({ type: 'command', command: 'node -e "process.stdout.write(\'mine \' + JSON.parse(require(\'fs\').readFileSync(0, \'utf8\')).session_id)"' }))
+    const s = fresh()
+    assert.equal(show({ session_id: s }), 'mine ' + s + '\npugi │ nothing to stop yet')
+    fs.rmSync(path.join(PUGI_DIR, 'status-previous.json'))
+  })
+
+  test('speaks Italian when the Italian word pack is installed', () => {
+    const s = fresh()
+    fs.appendFileSync(LOG, JSON.stringify({ ts: 't', session: s, file: 'a.ts', decision: 'blocked', bytes: 40000 }) + '\n')
+    fs.writeFileSync(path.join(PUGI_DIR, 'effort-words.json'), JSON.stringify({ _lang: 'it' }))
+    try {
+      assert.equal(show({ session_id: s }), 'pugi │ 1 lettura intera fermata (~10k token)')
+    } finally {
+      fs.rmSync(path.join(PUGI_DIR, 'effort-words.json'))
+    }
+  })
+
+  test('the recap: a sentence after a turn about that turn only, and one at session start about the last day', () => {
+    const RC = 'pugi-recap.cjs'
+    const s = fresh()
+    const now = new Date().toISOString()
+    const old = new Date(Date.now() - 2 * 24 * 3600e3).toISOString()
+    fs.appendFileSync(LOG, [{ ts: old, session: s, file: 'z.ts', decision: 'blocked', bytes: 4000 }, { ts: now, session: s, file: 'a.ts', decision: 'blocked', bytes: 40000 }, { ts: now, session: s, hook: 'effort', decision: 'suggest', level: 'max' }].map((r) => JSON.stringify(r)).join('\n') + '\n')
+    const first = call(RC, { session_id: s, hook_event_name: 'Stop' })
+    assert.equal(JSON.parse(first).systemMessage, 'Pugiunculus this turn: 2 whole-file reads stopped (~11k tokens); effort: 1× max.')
+    assert.equal(call(RC, { session_id: s, hook_event_name: 'Stop' }), '') // nothing new since
+    fs.appendFileSync(LOG, JSON.stringify({ ts: new Date(Date.now() + 1000).toISOString(), session: s, file: 'b.ts', decision: 'insisted', bytes: 40000 }) + '\n')
+    assert.equal(JSON.parse(call(RC, { session_id: s, hook_event_name: 'Stop' })).systemMessage, 'Pugiunculus this turn: 1 insisted.')
+    const start = JSON.parse(call(RC, { session_id: fresh(), hook_event_name: 'SessionStart' })).systemMessage
+    assert.match(start, /^Pugiunculus in the last 24 hours: /)
+    assert.doesNotMatch(start, /~1k/) // the two-day-old row is out
+  })
+
+  test('the reader agents of the session count, with what the lean ones spared', () => {
+    const s = fresh()
+    const t = path.join(SANDBOX, 'projects', 'p', s + '.jsonl')
+    const dir = path.join(SANDBOX, 'projects', 'p', s, 'subagents')
+    fs.mkdirSync(dir, { recursive: true })
+    const usage = (n) => JSON.stringify({ type: 'assistant', message: { id: 'm', usage: { input_tokens: 2, cache_creation_input_tokens: n, cache_read_input_tokens: 0 } } }) + '\n'
+    fs.writeFileSync(path.join(dir, 'agent-1.jsonl'), usage(9000))
+    fs.writeFileSync(path.join(dir, 'agent-2.jsonl'), usage(47000))
+    assert.equal(show({ session_id: s, transcript_path: t }), 'pugi │ 1 read handed to the lean agent (≈39k tokens kept out of the chat)')
   })
 })
 
@@ -631,5 +705,30 @@ describe('install.cjs', () => {
     install('--uninstall')
     assert.ok(!fs.existsSync(AGENT))
     assert.equal(read().subagentPromptCacheTtl, '5m')
+  })
+
+  test('the status line is opt-in, keeps the one that was there, and gives it back', () => {
+    const read = () => JSON.parse(fs.readFileSync(SETTINGS, 'utf8'))
+    const SAVED = path.join(PUGI_DIR, 'status-previous.json')
+    const mine = { type: 'command', command: 'echo mine', padding: 1, refreshInterval: 5 }
+    fs.writeFileSync(SETTINGS, JSON.stringify({ hooks: {}, statusLine: mine }))
+    install('--status')
+    assert.match(read().statusLine.command, /pugi-status\.cjs/)
+    assert.equal(read().statusLine.refreshInterval, 5)
+    assert.equal(read().statusLine.padding, 1)
+    assert.deepEqual(JSON.parse(fs.readFileSync(SAVED, 'utf8')), mine)
+    assert.equal(count(/pugi-recap/), 2)
+    install()
+    assert.match(read().statusLine.command, /pugi-status\.cjs/)
+    assert.equal(count(/pugi-recap/), 2)
+    install('--no-status')
+    assert.deepEqual(read().statusLine, mine)
+    assert.ok(!fs.existsSync(SAVED))
+    assert.equal(count(/pugi-recap/), 0)
+    fs.writeFileSync(SETTINGS, JSON.stringify({ hooks: {} }))
+    install('--status')
+    assert.ok(!fs.existsSync(SAVED))
+    install('--uninstall')
+    assert.equal(read().statusLine, undefined)
   })
 })

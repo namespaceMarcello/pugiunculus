@@ -60,13 +60,15 @@ replaced, not appended. This file: 200 lines.
 ## Commands
 
 ```bash
-node test.cjs                     # 49 tests: every hook decision, fed the JSON Claude Code sends
+node test.cjs                     # 55 tests: every hook decision, fed the JSON Claude Code sends
 node install.cjs                  # the three blockers into ~/.claude/settings.json
 node install.cjs --notebook       # add the session notebook (off by default)
 node install.cjs --effort         # add the effort router: prompt hook + four skills (off by default); detects your language, learns your words from history
 node bench/effort-score.cjs --learn   # learn word lists from your prompts and judge them on sessions they never saw
 node bench/effort-score.cjs --check   # harder: five folds by session, a split by time, a learning curve
+node bench/effort-score.cjs --applied # how often the level the router suggested became the level the turn ran at
 node install.cjs --lettore        # add the lean reader agent + subagent cache for an hour (off by default)
+node install.cjs --status         # what the hooks did this session, in the status line, under the one you had (off by default)
 node bench/effort-score.cjs       # does the scorer separate easy turns from hard ones, on your own prompts
 node measure-context.cjs --agents # what a subagent pays before doing anything
 node measure-context.cjs --writes # Write calls over files already open: what an Edit would have spared

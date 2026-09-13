@@ -42,8 +42,48 @@ const SAVINGS = args.includes('--savings')
 const LEARN = args.includes('--learn')
 const WRITE = args.includes('--write')
 const CHECK = args.includes('--check')
+const APPLIED = args.includes('--applied')
 const days = args.includes('--days') ? Number(args[args.indexOf('--days') + 1]) : DAYS
 const MARK = 'written by pugi install.cjs; node install.cjs --no-effort removes it'
+
+// --applied: did the level the router suggested become the level the turn ran at? The pugi log has the suggestion
+// (session, time, level); the transcript has the per-turn effort the API was asked for.
+if (APPLIED) {
+  const fs = require('node:fs')
+  const os = require('node:os')
+  const rows = []
+  try {
+    for (const l of fs.readFileSync(path.join(os.homedir(), '.claude', 'pugi', 'log.jsonl'), 'utf8').split('\n')) {
+      if (!l.includes('"hook":"effort"')) continue
+      try {
+        const r = JSON.parse(l)
+        if (r.hook === 'effort' && r.decision === 'suggest') rows.push({ session: r.session, at: Date.parse(r.ts), level: r.level })
+      } catch {}
+    }
+  } catch {}
+  const { turns } = lib.collect(days)
+  const by = {}
+  let suggested = 0
+  let applied = 0
+  let unknown = 0
+  for (const t of turns) {
+    if (!t.sid || !t.when) continue
+    const s = rows.find((r) => r.session === t.sid && Math.abs(r.at - t.when) < 15000)
+    if (!s) continue
+    suggested++
+    const b = (by[s.level] = by[s.level] || { n: 0, applied: 0 })
+    b.n++
+    if (!t.perTurn) unknown++
+    else if (t.perTurn === s.level) {
+      applied++
+      b.applied++
+    }
+  }
+  console.log(`Last ${days} days: ${suggested} turns where the router suggested a level` + (suggested ? `; ${applied} ran at it (${Math.round((100 * applied) / suggested)}%)` : '') + (unknown ? `; ${unknown} with no per-turn effort recorded` : '') + '.')
+  for (const level of LEVELS) if (by[level]) console.log(`  ${level.padEnd(7)} suggested ${String(by[level].n).padStart(4)}   applied ${String(by[level].applied).padStart(4)}`)
+  console.log('A suggestion the agent did not act on, and one it acted on that the harness ignored, look the same here: the transcript records the outcome, not the attempt.')
+  process.exit(0)
+}
 
 if (CHECK) {
   const r = lib.checks({ days, file: USER_WORDS, mark: MARK })

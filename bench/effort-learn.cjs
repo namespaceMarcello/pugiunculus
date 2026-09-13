@@ -75,7 +75,10 @@ function collect(days, root = ROOT) {
         rec = { u, visible: 0, calls: 0 }
         turn.reqs.set(id, rec)
         turn.effort = turn.effort || m.effort || null
+        if (!turn.sid) turn.sid = m.sessionId || m.session_id || session
       }
+      // The effort the turn ended up running at: the last request's, after any skill the agent invoked.
+      if (m.perTurnEffort) turn.perTurn = m.perTurnEffort
       rec.u = u // streaming: the last line carries the final usage
       const c = m.message.content
       if (Array.isArray(c))

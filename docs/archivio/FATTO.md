@@ -78,6 +78,32 @@ split by time (55% → 67%) and a learning curve (50 prompts 63%, 100 67%, 200
 72%); the words already learned on the same history are kept out of the
 judgement.
 
+### 2026-09-13 — see it while it happens
+
+`hooks/pugi-status.cjs` is a status line: reads stopped and what they weighed,
+insists, shell and fan-out blocks, effort levels suggested, the session's
+subagents and what the lean ones spared, plus context, cache and cost from the
+JSON Claude Code hands every status line. `install.cjs --status` saves the
+status line that was there to `~/.claude/pugi/status-previous.json`, where the
+script runs it first on every refresh; `--no-status` and `--uninstall` put it
+back. The effort router now also returns `systemMessage`, the hook field shown
+to the user. Four tests added (53 green). Try it: `node install.cjs --status`,
+then look at the bottom of the terminal.
+Then, at the author's request: the status line became a sentence in the
+language of the word pack, without context, cache and cost (the line above it
+already has them), and `hooks/pugi-recap.cjs` joined `--status` on `Stop` and
+`SessionStart`: a `systemMessage` after each answer about that turn, and one at
+session start about the last 24 hours. Two tests added (55 green).
+The same evening the author saw "thinking with max effort" under a turn the
+router had sent to `xhigh`: a skill's `effort:` applies when the user types
+the skill (verified twice across `--resume`d turns) and not reliably when the
+model invokes it (0 of 2 in fresh sessions, 4 of 6 in the interactive one).
+`bench/effort-score.cjs --applied` joins the router's log with the transcripts'
+`perTurnEffort`: 6 of 17 suggestions landed in two days, 2 of them the
+session's own level. Written in STATO as a known problem, with the Claude Code
+issues that describe it (#81313, #81318, #79664, #69267): the Skill tool path
+does not apply the skill's front matter.
+
 ### 2026-09-13 — the lean reader, and two measurements
 
 `install.cjs --lettore` writes `~/.claude/agents/lettore.md` (Sonnet; Read,

@@ -45,6 +45,22 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
 
 ## Known problems
 
+- **A skill's `effort:` does not reliably apply when the model invokes the
+  skill** (2026-09-13). Typed by the user as a slash command it applies every
+  time, across turns (verified with `claude -p` and `--resume`: `low` under
+  `--effort max`, twice). Invoked by the model through the Skill tool it
+  applied 0 times in 2 in fresh sessions and 4 times in 6 in the author's
+  interactive session, with no pattern found (first load or not, level). The
+  effort router depends on the model-invoked path, so what it suggests may not
+  happen; `bench/effort-score.cjs --applied` counts how often it did. It is a
+  known Claude Code bug: anthropics/claude-code issues #81313 (effort applied
+  on slash-command invocation, ignored via the Skill tool), #81318 (model and
+  effort overrides broken for commands and skills since v2.1.220), #79664 and
+  #69267. The transcript records identical lines for the invocations that
+  worked and the ones that did not; the difference is inside the harness.
+  Until it is fixed, the reliable levers stay `/effort` and a typed slash
+  skill, and the router is a suggestion the harness may or may not honour.
+
 - The notebook benchmark cannot answer the question it was built for: sixteen
   turns never reach the context size where cutting pays (a real session carries
   274k tokens per request, the benchmark a fraction of that).
@@ -73,6 +89,21 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
   what it costs in answers, is a benchmark. And **a quarter of everything
   re-read is conversation carried over by sessions resumed on an earlier one**
   (13 of 35 started at 226-380k): the cost side of the cut question, measured.
+- **A proxy for per-message effort** (noted 2026-09-14). The only automatic
+  and reliable way to set effort per prompt today: Fable 5.1 accepts an
+  effort-only system message before a user turn, cache intact (beta
+  `mid-conversation-output-config-2026-07-01`), and Claude Code already uses
+  it — that is why an effort change keeps the cache on Fable. A local proxy on
+  `ANTHROPIC_BASE_URL` could add that message with the level the router's
+  scorer gives. Step one, zero risk: a proxy in observe-only mode that forwards
+  everything unchanged and logs the shape of Claude Code's requests (the beta
+  header, the effort message). Step two, only if the shape matches the docs:
+  add one message. Open questions before step two: a subscription login
+  through a gateway is undocumented; a dead proxy stops Claude until it is
+  restarted; credentials pass through it.
+- Two ways to see the hooks work are installed for the author (2026-09-13):
+  the status line (`--status`) and the router's `systemMessage`. Which one
+  earns its place is the author's call after a few days; the other goes.
 - After a week with the effort router and the reader on (installed for the
   author 2026-09-13): `--split` again for the thinking share, the pugi log for
   how often the suggested skill was actually invoked, `--agents` for what the

@@ -166,12 +166,13 @@ if (require.main === module) {
     }
     note({ ...base, decision: r.level === 'high' ? 'none' : 'suggest', level: r.level, score: r.score, signals: r.signals })
     if (r.level === 'high') return null
+    const because = r.signals.length ? r.signals.join(', ') : 'no strong signal'
     return {
+      // The line the agent reads; and, when the terminal shows it, one for you.
+      systemMessage: `pugi: effort → ${r.level} (${because})`,
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
-        additionalContext:
-          `Effort suggested for this turn: ${r.level} (${r.signals.length ? r.signals.join(', ') : 'no strong signal'}). ` +
-          `First move: invoke the skill effort-${r.level}, unless your own reading of the request says otherwise.`,
+        additionalContext: `Effort suggested for this turn: ${r.level} (${because}). ` + `First move: invoke the skill effort-${r.level}, unless your own reading of the request says otherwise.`,
       },
     }
   }

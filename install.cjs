@@ -10,6 +10,8 @@
  *   node install.cjs --no-effort    take the effort router out, word pack included
  *   node install.cjs --lettore      add the lean reader agent and keep the subagent cache warm for an hour
  *   node install.cjs --no-lettore   take the reader agent and that setting out
+ *   node install.cjs --status       show what the hooks did in the status line; the status line you had keeps running above it
+ *   node install.cjs --no-status    your status line back as it was
  *   node install.cjs --uninstall    take everything out again
  *
  * Your settings file is backed up next to itself before anything is written.
@@ -31,6 +33,8 @@ const LANG = process.argv.includes('--lang') ? String(process.argv[process.argv.
 const NO_LEARN = process.argv.includes('--no-learn')
 const LETTORE_ON = process.argv.includes('--lettore')
 const LETTORE_OFF = process.argv.includes('--no-lettore')
+const STATUS_ON = process.argv.includes('--status')
+const STATUS_OFF = process.argv.includes('--no-status')
 
 const ENTRIES = [
   {
@@ -99,7 +103,12 @@ This turn runs at effort ${level}. ${SKILLS[level]}
 // first run after the rename cleans up the old entries and every run after
 // that stays idempotent.
 const commandMatches = (entry, re) => (entry.hooks || []).some((h) => re.test(String(h.command || '')))
-const isOurs = (entry) => commandMatches(entry, /(?:squint|pugi)(?:-agents|-bash|-notebook|-effort)?\.cjs/)
+const isOurs = (entry) => commandMatches(entry, /(?:squint|pugi)(?:-agents|-bash|-notebook|-effort|-recap)?\.cjs/)
+// With the status line comes a recap for the user: a sentence after each answer and one at session start.
+const RECAP = [
+  { event: 'Stop', file: 'pugi-recap.cjs' },
+  { event: 'SessionStart', matcher: 'startup|resume', file: 'pugi-recap.cjs' },
+]
 const isNotebook = (entry) => commandMatches(entry, /pugi-notebook\.cjs/)
 const isEffort = (entry) => commandMatches(entry, /pugi-effort\.cjs/)
 
@@ -165,6 +174,14 @@ const effort = !UNINSTALL && !EFFORT_OFF && (EFFORT_ON || hadEffort)
 const hadLettore = agentIsOurs()
 const lettore = !UNINSTALL && !LETTORE_OFF && (LETTORE_ON || hadLettore)
 
+// The status line: ours goes into settings.statusLine, and the one that was there is kept in
+// ~/.claude/pugi/status-previous.json, where hooks/pugi-status.cjs runs it first on every refresh.
+const STATUS_FILE = path.join(DIR, 'status-previous.json')
+const STATUS_COMMAND = 'node "' + HOOKS + '/pugi-status.cjs"'
+const statusIsOurs = (s) => !!s && typeof s.command === 'string' && /pugi-status\.cjs/.test(s.command)
+const hadStatus = statusIsOurs(settings.statusLine)
+const status = !UNINSTALL && !STATUS_OFF && (STATUS_ON || hadStatus)
+
 let removed = 0
 for (const [event, list] of lists()) {
   const kept = list.filter((e) => !isOurs(e))
@@ -175,11 +192,35 @@ for (const [event, list] of lists()) {
 }
 
 if (!UNINSTALL) {
-  for (const e of [...ENTRIES, ...(notebook ? NOTEBOOK : []), ...(effort ? EFFORT : [])]) {
+  for (const e of [...ENTRIES, ...(notebook ? NOTEBOOK : []), ...(effort ? EFFORT : []), ...(status ? RECAP : [])]) {
     const hook = { type: 'command', command: 'node "' + HOOKS + '/' + e.file + '"', timeout: 5 }
     if (e.if) hook.if = e.if
     ;(settings.hooks[e.event] = settings.hooks[e.event] || []).push(e.matcher ? { matcher: e.matcher, hooks: [hook] } : { hooks: [hook] })
   }
+}
+
+// The status line: on the way in, whatever is there is saved and ours takes its place; on the way out, what was saved comes back.
+let statusWritten = false
+let statusRestored = false
+if (status && !hadStatus) {
+  if (settings.statusLine) {
+    fs.mkdirSync(DIR, { recursive: true })
+    fs.writeFileSync(STATUS_FILE, JSON.stringify(settings.statusLine, null, 2) + '\n')
+  }
+  // The previous line's refresh timer and padding still apply: it runs inside ours.
+  const keep = {}
+  for (const key of ['refreshInterval', 'padding']) if (settings.statusLine && settings.statusLine[key] !== undefined) keep[key] = settings.statusLine[key]
+  settings.statusLine = { type: 'command', command: STATUS_COMMAND, ...keep }
+  statusWritten = true
+} else if (!status && hadStatus) {
+  let saved = null
+  try {
+    saved = JSON.parse(fs.readFileSync(STATUS_FILE, 'utf8'))
+  } catch {}
+  if (saved) settings.statusLine = saved
+  else delete settings.statusLine
+  fs.rmSync(STATUS_FILE, { force: true })
+  statusRestored = true
 }
 
 // The reader's cache setting: written with the agent, taken out with it, and never over a value that is not ours.
@@ -274,6 +315,7 @@ let agentRemoved = false
 if (UNINSTALL) {
   if (skillsRemoved) console.log('removed     ' + skillsRemoved + ' effort skill(s)')
   if (packRemoved) console.log('removed     the word pack')
+  if (statusRestored) console.log('restored    your status line')
   if (agentRemoved) console.log('removed     the lettore agent and its cache setting')
   console.log(removed ? 'removed     ' + removed + ' pugi hook(s)' : 'nothing to remove — pugi was not installed')
 } else {
@@ -291,6 +333,8 @@ if (UNINSTALL) {
   if (packRemoved) console.log('removed     the word pack')
   if (lettore) console.log('installed   ' + 'lettore agent'.padEnd(17) + 'a lean reader for large reads; subagent cache kept warm for an hour' + (agentWritten ? ' (written)' : ''))
   if (agentRemoved) console.log('removed     the lettore agent and its cache setting')
+  if (status) console.log('installed   ' + 'status line'.padEnd(17) + 'what the hooks did this session, under the status line you had' + (statusWritten ? ' (written)' : '') + '; a recap after each answer and at session start')
+  if (statusRestored) console.log('restored    your status line')
   console.log('')
   console.log(effort || lettore ? 'The hooks take effect immediately; the effort skills and the lettore agent from your next session.' : 'They take effect immediately; no restart needed.')
   console.log('')
@@ -300,6 +344,7 @@ if (UNINSTALL) {
   console.log(notebook ? '  drop the notebook      node install.cjs --no-notebook' : '  add the notebook       node install.cjs --notebook    (off by default)')
   console.log(effort ? '  drop the effort router node install.cjs --no-effort' : '  add the effort router  node install.cjs --effort      (off by default)')
   console.log(lettore ? '  drop the reader agent  node install.cjs --no-lettore' : '  add the reader agent   node install.cjs --lettore     (off by default)')
+  console.log(status ? '  drop the status line   node install.cjs --no-status' : '  add the status line    node install.cjs --status      (off by default)')
   console.log('  disable all, keep log  touch ~/.claude/pugi/OFF')
   console.log('  remove                 node install.cjs --uninstall')
   console.log('  decisions              ~/.claude/pugi/log.jsonl')
