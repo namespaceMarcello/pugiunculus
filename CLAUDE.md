@@ -49,6 +49,7 @@ replaced, not appended. This file: 200 lines.
 |---|---|
 | what each hook blocks, and the numbers behind it | `README.md` |
 | the pruner — what it must do, and what it is worth | `docs/potatore.md` |
+| what the harness, skills and plugins inject before any tool runs, and what it costs — **open, to think about** | `docs/privately.md` |
 | where the project stands: decisions, defects, next steps | `docs/STATO.md` |
 | what was done, and when | `docs/archivio/FATTO.md` |
 | what a session actually sends to the model | run `node measure-context.cjs` |

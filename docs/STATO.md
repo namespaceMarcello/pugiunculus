@@ -39,4 +39,6 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
   repeated runs) before deciding whether cutting pays at all.
 - Consider having the installer write the auto-compaction window and turn off MCP
   servers and skills the user's logs show are never used: the fixed 55k is the
-  largest untouched block on every move.
+  largest untouched block on every move. Measured and still undecided in
+  `docs/privately.md` — 88k of one session was three items loaded at startup and
+  never used.
