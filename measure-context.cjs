@@ -7,6 +7,8 @@
  *   node measure-context.cjs --tools    which tools' results weigh most, and what the big Reads were
  *   node measure-context.cjs --fixed    what is listed to the model on every move and never used: skills, agents, MCP servers
  *   node measure-context.cjs --split    what a request carries, by category: the fixed part, your words, tool results, the model's text, calls and thinking
+ *   node measure-context.cjs --agents   what a subagent pays before doing anything, and what they cost together
+ *   node measure-context.cjs --writes   Write calls over files already read or edited in the session — what an Edit would have spared
  *
  * Claude Code sends the whole conversation with every request. This reads your
  * own transcripts and splits what that costs: re-reading the conversation,
@@ -34,7 +36,8 @@ const W = { input: 1, read: 0.1, write5m: 1.25, write1h: 2, output: 5 }
 const CAPS = [150e3, 250e3, 400e3]
 const NOISE = /^\s*(<command-|<local-command|Caveat:|\[Request interrupted|<system-reminder>|<task-notification|<bash-|This session is being continued)/
 
-function transcripts(dir, out = []) {
+/** Interactive-session transcripts under `dir` touched since `since` (default: the --days window). */
+function transcripts(dir, out = [], since = SINCE) {
   let entries
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -45,10 +48,10 @@ function transcripts(dir, out = []) {
     const p = path.join(dir, e.name)
     if (e.isDirectory()) {
       // Subagents run in their own context; the benchmarks' sessions (cwd pugi-bench-*) are not your work.
-      if (e.name !== 'subagents' && !e.name.includes('pugi-bench')) transcripts(p, out)
+      if (e.name !== 'subagents' && !e.name.includes('pugi-bench')) transcripts(p, out, since)
     } else if (e.name.endsWith('.jsonl') && !e.name.startsWith('agent-')) {
       try {
-        if (fs.statSync(p).mtimeMs >= SINCE) out.push(p)
+        if (fs.statSync(p).mtimeMs >= since) out.push(p)
       } catch {}
     }
   }
@@ -677,11 +680,143 @@ function split() {
   )
 }
 
+// ---------------------------------------------------------------------------
+// --agents: what a subagent pays before doing anything.
+//
+// A subagent starts a conversation of its own: system prompt, tool schemas,
+// and whatever its type loads. Its first request is that price, paid before a
+// single file is read. The transcripts under subagents/ carry the usage.
+
+function subagentTranscripts(dir, out = []) {
+  let entries
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return out
+  }
+  for (const e of entries) {
+    const p = path.join(dir, e.name)
+    if (e.isDirectory()) {
+      if (!e.name.includes('pugi-bench')) subagentTranscripts(p, out)
+    } else if (e.name.startsWith('agent-') && e.name.endsWith('.jsonl')) {
+      try {
+        if (fs.statSync(p).mtimeMs >= SINCE) out.push(p)
+      } catch {}
+    }
+  }
+  return out
+}
+
+const ktok = (t) => Math.round(t / 1000) + 'k'
+const ctxOf = (u) => (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0)
+
+function agents() {
+  const rows = []
+  for (const file of subagentTranscripts(ROOT)) {
+    let text
+    try {
+      text = fs.readFileSync(file, 'utf8')
+    } catch {
+      continue
+    }
+    const index = new Map()
+    const reqs = []
+    for (const line of text.split('\n')) {
+      if (!line) continue
+      let m
+      try {
+        m = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const u = m.type === 'assistant' && m.message && m.message.usage
+      const id = u && (m.message.id || m.requestId)
+      if (!id) continue
+      if (!index.has(id)) {
+        index.set(id, reqs.length)
+        reqs.push(u)
+      } else reqs[index.get(id)] = u
+    }
+    if (!reqs.length) continue
+    rows.push({ first: ctxOf(reqs[0]), requests: reqs.length, total: reqs.reduce((s, u) => s + ctxOf(u), 0), output: reqs.reduce((s, u) => s + (u.output_tokens || 0), 0) })
+  }
+  if (!rows.length) {
+    console.log(`No subagent transcripts in the last ${DAYS} days under ${ROOT}.`)
+    return
+  }
+  const sorted = rows.map((r) => r.first).sort((a, b) => a - b)
+  const q = (p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]
+  const lean = rows.filter((r) => r.first < 15e3).length
+  const reqMedian = rows.map((r) => r.requests).sort((a, b) => a - b)[Math.floor(rows.length / 2)]
+  console.log(`Last ${DAYS} days: ${rows.length} subagents.`)
+  console.log(`What one pays before doing anything, its first request with system prompt and tool schemas: median ${ktok(q(0.5))}, 90th percentile ${ktok(q(0.9))} tokens; ${lean} of ${rows.length} started under 15k, as a lean reader does.`)
+  console.log(`All of them together: ${ktok(rows.reduce((s, r) => s + r.total, 0))} tokens of context sent, ${ktok(rows.reduce((s, r) => s + r.output, 0))} of output; ${reqMedian} requests per agent, median.`)
+  console.log('The first request is paid once per agent. Its fixed part is cached across agents of the same type for the subagent cache TTL: five minutes by default, an hour with subagentPromptCacheTtl "1h".')
+}
+
+// ---------------------------------------------------------------------------
+// --writes: Write calls over files the session had already read or edited.
+//
+// A Write carries the whole file in the call, and the call stays in the
+// conversation. When the file was already open in the session, an Edit would
+// have carried only the changed lines. This counts those Writes and what they
+// weighed — the number a Write blocker would have to move.
+
+function writes() {
+  let sessions = 0
+  let fresh = 0
+  let freshChars = 0
+  let over = 0
+  let overChars = 0
+  const sizes = []
+  for (const file of transcripts(ROOT)) {
+    const msgs = messages(file)
+    if (!msgs) continue
+    sessions++
+    const known = new Set()
+    for (const m of msgs) {
+      if (m.isSidechain || m.type !== 'assistant') continue
+      const c = m.message && m.message.content
+      if (!Array.isArray(c)) continue
+      for (const b of c) {
+        if (!b || b.type !== 'tool_use' || !b.input || !b.input.file_path) continue
+        const key = String(b.input.file_path).replace(/\\/g, '/').toLowerCase()
+        if (b.name === 'Write') {
+          const n = String(b.input.content || '').length
+          if (known.has(key)) {
+            over++
+            overChars += n
+            sizes.push(n)
+          } else {
+            fresh++
+            freshChars += n
+          }
+        }
+        if (b.name === 'Read' || b.name === 'Edit' || b.name === 'MultiEdit' || b.name === 'Write') known.add(key)
+      }
+    }
+  }
+  if (!sessions) {
+    console.log(`No interactive sessions in the last ${DAYS} days under ${ROOT}.`)
+    return
+  }
+  sizes.sort((a, b) => a - b)
+  console.log(`Last ${DAYS} days: ${sessions} interactive sessions.`)
+  console.log(`Write of a file the session had not opened before: ${fresh} calls, ${k(freshChars)} tokens of content. New files; nothing to spare there.`)
+  console.log(
+    `Write over a file already read or edited in the session: ${over} calls, ${k(overChars)} tokens of content` +
+      (sizes.length ? `, median ${k(sizes[Math.floor(sizes.length / 2)])} per call, largest ${k(sizes[sizes.length - 1])}.` : '.')
+  )
+  console.log('Each of those calls stays in the conversation and is re-read by every later request; an Edit would have carried the changed lines only.')
+}
+
 module.exports = { transcripts, typed, messages, chars, CHARS_PER_TOKEN, W, DAYS, ROOT, HOME }
 
 if (require.main === module) {
   if (args.includes('--tools')) tools()
   else if (args.includes('--fixed')) fixed()
   else if (args.includes('--split')) split()
+  else if (args.includes('--agents')) agents()
+  else if (args.includes('--writes')) writes()
   else cost()
 }

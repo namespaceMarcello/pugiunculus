@@ -4,8 +4,9 @@
 Hooks for Claude Code that cut what a coding session sends to the model. Three of
 them refuse known waste (a whole-file `Read`, `cat BIG`, a fan-out of small
 subagents). A fourth, off by default, keeps a session notebook that survives a
-context cut. Nothing ships on an argument: a hook that does not move a measured
-number is removed.
+context cut. A fifth, off by default, suggests an effort level per prompt and
+four skills set it. Nothing ships on an argument: a hook that does not move a
+measured number is removed.
 
 Node, no dependencies, CommonJS (`.cjs`), Windows first.
 
@@ -59,9 +60,16 @@ replaced, not appended. This file: 200 lines.
 ## Commands
 
 ```bash
-node test.cjs                     # 38 tests: every hook decision, fed the JSON Claude Code sends
+node test.cjs                     # 49 tests: every hook decision, fed the JSON Claude Code sends
 node install.cjs                  # the three blockers into ~/.claude/settings.json
 node install.cjs --notebook       # add the session notebook (off by default)
+node install.cjs --effort         # add the effort router: prompt hook + four skills (off by default); detects your language, learns your words from history
+node bench/effort-score.cjs --learn   # learn word lists from your prompts and judge them on sessions they never saw
+node bench/effort-score.cjs --check   # harder: five folds by session, a split by time, a learning curve
+node install.cjs --lettore        # add the lean reader agent + subagent cache for an hour (off by default)
+node bench/effort-score.cjs       # does the scorer separate easy turns from hard ones, on your own prompts
+node measure-context.cjs --agents # what a subagent pays before doing anything
+node measure-context.cjs --writes # Write calls over files already open: what an Edit would have spared
 node measure.cjs                  # what whole-file reads cost in your own history
 node measure-context.cjs          # where a session's cost goes: re-reading, cache writes, output, prompts
 node measure-context.cjs --tools  # which tools' results weigh most, and what the big Reads were

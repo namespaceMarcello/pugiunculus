@@ -262,6 +262,63 @@ So it ships **off**, and stays off until a benchmark shaped like a real session 
 
 ---
 
+## The effort router: think as much as the request needs
+
+The model's own thinking is the largest single block a session re-reads — 20% of everything, measured with `node measure-context.cjs --split` on 14 days of real work — and it is produced at whatever effort the session was set to, whether the prompt was "commit e push" or a design question. Nothing in Claude Code lets a hook change the effort of a request, but a skill can: a skill whose front matter says `effort: low` runs the rest of the turn at low, and beats the session level. Verified in a fresh session started with `--effort max`: the transcript records the skill's request at `low`.
+
+So the router is one hook and four skills. On every prompt, `hooks/pugi-effort.cjs` scores the text with a fixed word list — no model, no network — and adds one line next to it: *Effort suggested for this turn: xhigh*. The agent invokes the matching skill (`effort-low`, `effort-medium`, `effort-xhigh`, `effort-max`) as its first move; `high` is the session's own level and gets no suggestion. A bare "vai" keeps the previous turn's level. The prompt itself is never touched.
+
+Whether a word list can tell an easy turn from a hard one is the whole question, so `bench/effort-score.cjs` replays every typed prompt of your own history through the scorer and measures what the turn it started actually cost:
+
+| scored as | turns | thinking, median | tool calls, median |
+|---|---|---|---|
+| low | 51 | 454 | 1 |
+| medium | 260 | 1k | 3 |
+| high | 74 | 1k | 1 |
+| xhigh | 35 | 4k | 7 |
+| max | 13 | 4k | 9 |
+
+433 prompts, 14 days. Restricted to the 228 turns whose session sat at the same effort, so thinking is comparable, the turns scored `max` thought 16× the ones scored `low`. The list separates. What it does not do yet is prove the saving: that is a week of `node measure-context.cjs --split` with the router on, and it is why the router ships **off**.
+
+```bash
+node install.cjs --effort       # the hook, and the four skills into ~/.claude/skills (they load with your next session)
+node bench/effort-score.cjs     # the table above, on your own prompts; --samples prints ten prompts per level to read by eye
+node install.cjs --no-effort    # takes the hook and its skills out; a skill of yours with the same name is left alone
+```
+
+The words are English by default, in `hooks/effort-words.json`, and the installer does not expect you to write your own. `node install.cjs --effort` reads your last 30 days of prompts, tells which language they are in, and adds that language's pack when there is one (`hooks/effort-words.it.json` today; `--lang xx` picks one by hand). Then, with a hundred prompts or more of history, it **learns your words**: within each effort level your sessions ran at, the turns that thought most are hard and the ones that thought least are easy, and a word or pair of words that keeps company with hard turns becomes a hard signal, one that keeps company with easy turns a mechanical one, in whatever language you write. Nothing learned is trusted on the data it came from: the lists are learned on half the sessions and judged on the other half by how often they rank a hard turn above an easy one, and they are written to `~/.claude/pugi/effort-words.json` only when they beat what is already there.
+
+On the author's 814 prompts, judged on sessions the words never saw:
+
+| word lists | ranks a hard turn above an easy one |
+|---|---|
+| English defaults | 62% |
+| plus the Italian pack | 65% |
+| learned from the history | 76% |
+
+50% is a coin flip. `node bench/effort-score.cjs --learn` repeats the judgement on your own history without writing anything; `--no-learn` at install skips the step; anything you add to the words file by hand stays, and a file the installer did not write is never touched.
+
+One split can be lucky, so `node bench/effort-score.cjs --check` does it three harder ways on the same 817 prompts: five folds by session, every session judged once by words that never saw it — defaults 63%, learned 76% on the mean, and better on every fold; a split by time, learned on the first three weeks and judged on the last — 55% to 67%, the weakest, because the last week's work was different from the rest; and a learning curve — 50 prompts give 63%, 100 give 67%, 200 give 72%, which is why the installer asks for a hundred.
+
+On Fable 5.1 with a subscription, a mid-session effort change keeps the prompt cache; on other models it re-reads the whole conversation once, so do not run this router there.
+
+### Reading in a lean agent
+
+A file read in the main conversation stays there and is re-read by every later request. Read by a subagent, it is paid once and thrown away with the agent's context; only the answer comes back. The catch is what a subagent pays before reading anything — its own system prompt and tool schemas. Measured on 744 subagents over 14 days: median 24k tokens for the first request, 44k at the 90th percentile.
+
+`node install.cjs --lettore` writes a reader agent with three tools and ten lines of instructions, and sets the subagent prompt cache to an hour, so that price is paid once an hour rather than once per agent. Same trivial task, same model:
+
+| agent | first request |
+|---|---|
+| `general-purpose`, Sonnet | 47,946 tokens |
+| `lettore`, Sonnet | 10,657 tokens |
+
+The whole-file `Read` refusal names it when it is installed. Hand it large reads and explorations across files with a complete brief — which files, what to look for, what shape of answer; open thirty lines yourself.
+
+One number that closed a hook before it was written: `node measure-context.cjs --writes` counts `Write` calls over files the session had already opened, the case where an `Edit` would have carried only the changed lines. 36 calls in 14 days, 111k tokens. A blocker there would move nothing worth its own refusals.
+
+---
+
 ## Measure your own history before you install
 
 Pugiunculus ships with the tool that produced these numbers. Point it at your own logs:

@@ -462,6 +462,94 @@ describe('pugi-notebook.cjs — the session notebook', () => {
 
 // ------------------------------------------------------------------ install.cjs
 
+// ---------------------------------------------------------- pugi-effort.cjs
+
+describe('pugi-effort.cjs — the effort router', () => {
+  const EF = 'pugi-effort.cjs'
+  const IT = { PUGI_EFFORT_WORDS: path.join(HOOKS, 'effort-words.it.json') }
+  const ask = (session, prompt, extra) => call(EF, { session_id: session, hook_event_name: 'UserPromptSubmit', prompt }, extra)
+  const suggested = (out) => JSON.parse(out).hookSpecificOutput.additionalContext
+  const { build } = require(path.join(HOOKS, EF))
+  const score = build(path.join(SANDBOX, 'no-such-words.json')).score // the English defaults alone, whatever this machine has installed
+  const it = build(IT.PUGI_EFFORT_WORDS).score
+  const DESIGN = "progetta l'architettura del potatore: perché un hook non basta? cosa cambia con un proxy?"
+
+  test('the English defaults: mechanical goes low, design goes max, a plain question stays high, "in short" pulls down', () => {
+    assert.equal(score('commit and push').level, 'low')
+    assert.equal(score("design the pruner's architecture: why is a hook not enough? what changes with a proxy?").level, 'max')
+    assert.equal(score('why does the cache expire after an hour?').level, 'high')
+    assert.equal(score('where does the cache live?').level, 'medium')
+    assert.equal(score('in short, why is the pruner useless').level, 'low')
+    assert.equal(score('go', 'max').level, 'max')
+    assert.equal(score('go').level, 'high')
+  })
+
+  test('a word pack adds its language: the same prompts in Italian, and the Italian "vai"', () => {
+    assert.equal(score(DESIGN).level, 'high') // English only: nothing counts but the two question marks
+    assert.equal(it('commit e push').level, 'low')
+    assert.equal(it(DESIGN).level, 'max')
+    assert.equal(it('perché la cache scade dopo un\'ora?').level, 'high')
+    assert.equal(it('spiegami in breve perché il potatore è inutile').level, 'low')
+    assert.equal(it('vai', 'max').level, 'max')
+    assert.equal(score('vai', 'max').level, 'medium')
+  })
+
+  test('the hook suggests a skill for every level but high, and logs it', () => {
+    const s = fresh()
+    assert.match(suggested(ask(s, 'commit e push', IT)), /Effort suggested for this turn: low .*effort-low/)
+    assert.equal(ask(s, 'perché la cache scade dopo un\'ora?', IT), '')
+    assert.deepEqual(decisions(s), ['suggest', 'none'])
+  })
+
+  test('a bare "vai" keeps the level of the previous turn', () => {
+    const s = fresh()
+    assert.match(suggested(ask(s, DESIGN, IT)), /: max /)
+    assert.match(suggested(ask(s, 'vai', IT)), /: max \(continuation\)/)
+  })
+
+  test('off keeps the log; slash commands are ignored; a broken event goes through untouched', () => {
+    const s = fresh()
+    assert.equal(ask(s, 'commit e push', { PUGI_OFF: '1' }), '')
+    assert.deepEqual(decisions(s), ['off'])
+    assert.equal(ask(s, '/effort max'), '')
+    assert.deepEqual(decisions(s), ['off'])
+    assert.equal(call(EF, { session_id: s }), '')
+  })
+})
+
+// ------------------------------------------------------ bench/effort-learn.cjs
+
+describe('bench/effort-learn.cjs — learning the words', () => {
+  const lib = require(path.join(__dirname, 'bench', 'effort-learn.cjs'))
+  const { build } = require(path.join(HOOKS, 'pugi-effort.cjs'))
+
+  test('words that go with heavy turns become hard signals, words of light turns mechanical, tiny repeated prompts continuations', () => {
+    const turns = []
+    for (let i = 0; i < 60; i++)
+      turns.push(i % 2 ? { text: 'zorb the flumble for me', session: 's' + (i % 4), thinking: 9000 + i, calls: 4, requests: 3, effort: 'high' } : { text: 'plain request number ' + i, session: 's' + (i % 4), thinking: 300 + i, calls: 1, requests: 1, effort: 'high' })
+    for (let i = 0; i < 6; i++) turns.push({ text: 'avanti', session: 's0', thinking: 100, calls: 0, requests: 1, effort: 'high' })
+    const pack = lib.learn(turns, { min: 5 })
+    assert.ok(pack.design.words.concat(pack.why.words).includes('zorb'))
+    assert.ok(pack.mechanical.words.includes('plain'))
+    assert.ok(!pack.mechanical.words.includes('zorb'))
+    assert.ok(pack.continue.includes('avanti'))
+    assert.ok(lib.separation(build(pack).score, turns.map((t) => ({ ...t }))) > 0.9)
+    assert.ok(['xhigh', 'max'].includes(build(pack).score('could you zorb the flumble for me today, and take the time it needs to come out right').level))
+  })
+
+  test('the language of the prompts, by the words no language can do without', () => {
+    assert.equal(lib.detectLanguage(Array(6).fill('che cosa non va con questo file e come mai non funziona per te')).lang, 'it')
+    assert.equal(lib.detectLanguage(Array(6).fill('what is the plan and how do you do it for this file')).lang, 'en')
+    assert.equal(lib.detectLanguage(['zorb']), null)
+  })
+
+  test('with no history there is nothing to learn, and nothing is written', () => {
+    const r = lib.learnAndJudge({ days: 30, file: path.join(SANDBOX, 'words.json'), mark: 'x', write: true, root: path.join(SANDBOX, 'no-projects') })
+    assert.equal(r.verdict, 'not enough history')
+    assert.ok(!fs.existsSync(path.join(SANDBOX, 'words.json')))
+  })
+})
+
 describe('install.cjs', () => {
   const SETTINGS = path.join(HOME, '.claude', 'settings.json')
   const install = (...args) => spawnSync(process.execPath, [path.join(__dirname, 'install.cjs'), ...args], { encoding: 'utf8', env: env() })
@@ -487,5 +575,61 @@ describe('install.cjs', () => {
     install('--uninstall')
     assert.equal(count(/pugi/), 0)
     assert.deepEqual(JSON.parse(fs.readFileSync(SETTINGS, 'utf8')).hooks.Stop, [MINE])
+  })
+
+  test('the effort router is opt-in, writes four skills, leaves a skill that is not ours, and takes its own out again', () => {
+    const SKILLS = path.join(HOME, '.claude', 'skills')
+    const theirs = '---\nname: effort-low\n---\nmine\n'
+    fs.writeFileSync(SETTINGS, JSON.stringify({ hooks: {} }))
+    fs.mkdirSync(path.join(SKILLS, 'effort-low'), { recursive: true })
+    fs.writeFileSync(path.join(SKILLS, 'effort-low', 'SKILL.md'), theirs)
+    install('--effort')
+    assert.equal(count(/pugi-effort/), 1)
+    for (const l of ['medium', 'xhigh', 'max']) assert.match(fs.readFileSync(path.join(SKILLS, 'effort-' + l, 'SKILL.md'), 'utf8'), new RegExp('^effort: ' + l + '$', 'm'))
+    assert.equal(fs.readFileSync(path.join(SKILLS, 'effort-low', 'SKILL.md'), 'utf8'), theirs)
+    install()
+    assert.equal(count(/pugi-effort/), 1)
+    install('--no-effort')
+    assert.equal(count(/pugi-effort/), 0)
+    assert.ok(!fs.existsSync(path.join(SKILLS, 'effort-max')))
+    assert.equal(fs.readFileSync(path.join(SKILLS, 'effort-low', 'SKILL.md'), 'utf8'), theirs)
+  })
+
+  test('--lang writes the word pack where the hook looks, and --no-effort takes it out; an unknown language changes nothing', () => {
+    const WORDS = path.join(HOME, '.claude', 'pugi', 'effort-words.json')
+    fs.writeFileSync(SETTINGS, JSON.stringify({ hooks: {} }))
+    assert.match(install('--effort').stdout, /not enough history/) // a sandbox has no transcripts: nothing detected, nothing learned
+    assert.ok(!fs.existsSync(WORDS))
+    install('--effort', '--lang', 'xx')
+    assert.ok(!fs.existsSync(WORDS))
+    install('--effort', '--lang', 'it')
+    const pack = JSON.parse(fs.readFileSync(WORDS, 'utf8'))
+    assert.equal(pack._lang, 'it')
+    assert.ok(pack.continue.includes('vai'))
+    install()
+    assert.ok(fs.existsSync(WORDS))
+    install('--no-effort')
+    assert.ok(!fs.existsSync(WORDS))
+  })
+
+  test('the reader agent is opt-in: its definition and the subagent cache setting come and go together', () => {
+    const AGENT = path.join(HOME, '.claude', 'agents', 'lettore.md')
+    const read = () => JSON.parse(fs.readFileSync(SETTINGS, 'utf8'))
+    fs.writeFileSync(SETTINGS, JSON.stringify({ hooks: {} }))
+    install('--lettore')
+    assert.match(fs.readFileSync(AGENT, 'utf8'), /^name: lettore$/m)
+    assert.equal(read().subagentPromptCacheTtl, '1h')
+    install()
+    assert.ok(fs.existsSync(AGENT))
+    assert.equal(read().subagentPromptCacheTtl, '1h')
+    install('--no-lettore')
+    assert.ok(!fs.existsSync(AGENT))
+    assert.equal(read().subagentPromptCacheTtl, undefined)
+    fs.writeFileSync(SETTINGS, JSON.stringify({ hooks: {}, subagentPromptCacheTtl: '5m' }))
+    install('--lettore')
+    assert.equal(read().subagentPromptCacheTtl, '5m')
+    install('--uninstall')
+    assert.ok(!fs.existsSync(AGENT))
+    assert.equal(read().subagentPromptCacheTtl, '5m')
   })
 })

@@ -140,7 +140,10 @@ function run(ev) {
       permissionDecisionReason:
         `Whole-file Read blocked: up to ~${tokens} tokens for one file. ` +
         `Find the line with Grep first, then Read with offset/limit around it. ` +
-        `If you genuinely need the entire file, repeat this exact Read and it will go through.`,
+        `If you genuinely need the entire file, repeat this exact Read and it will go through.` +
+        (fs.existsSync(path.join(HOME, '.claude', 'agents', 'lettore.md'))
+          ? ' For an exploration across several files, hand it to the lettore agent: it reads in its own context and returns only what you asked.'
+          : ''),
     },
     suppressOutput: true,
   })

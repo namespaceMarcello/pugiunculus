@@ -23,6 +23,21 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
   `Read` slices, and a hook cannot act on what is already in the conversation.
   The note keeps the reasons. Retroactive pruning is a proxy question, decided on
   the ceiling `bench/prune-sim.cjs` measures, not before.
+- **The effort router ships off, like the notebook** (2026-09-13). The scorer
+  separates easy turns from hard ones on the user's own prompts (8× to 16× in
+  thinking between the extreme classes); what it saves is unmeasured until a
+  week of `--split` with it on. A skill's `effort:` beats the session level for
+  the turn; no hook can change effort directly. Fable-only in practice: on other
+  models a mid-session effort change invalidates the prompt cache. The words
+  are English by default and **learned from the user's own history** at install,
+  kept only when they win on held-out sessions (62% → 76% on the author's
+  prompts); a hand-written language pack is the fallback, not the design.
+- **No Write blocker** (2026-09-13). `measure-context.cjs --writes`: 36 Write
+  calls over already-open files in 14 days, 111k tokens of content. Nothing a
+  refusal could move.
+- **Large reads go to a lean subagent, not the conversation** (2026-09-13).
+  `install.cjs --lettore`: 10.7k tokens to start against 47.9k for a
+  general-purpose agent, and the subagent cache kept for an hour.
 - **No hook rewrites the user's prompt into a summary** (2026-09-13). The hook
   API cannot replace a prompt, only add to it or erase it; the prompt is 0.6% of
   the payload; and a small model resolving a confused request resolves it by
@@ -58,6 +73,10 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
   what it costs in answers, is a benchmark. And **a quarter of everything
   re-read is conversation carried over by sessions resumed on an earlier one**
   (13 of 35 started at 226-380k): the cost side of the cut question, measured.
+- After a week with the effort router and the reader on (installed for the
+  author 2026-09-13): `--split` again for the thinking share, the pugi log for
+  how often the suggested skill was actually invoked, `--agents` for what the
+  reader cost. The router stays opt-in until those numbers exist.
 - Re-run the notebook benchmark in the shape of a real session (40+ turns,
   repeated runs) before deciding whether cutting pays at all.
 - Consider having the installer write the auto-compaction window: the fixed 55k

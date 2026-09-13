@@ -1,0 +1,18 @@
+{
+  "_about": "Word lists for hooks/pugi-effort.cjs. Each entry is a regular-expression fragment matched at word boundaries, case-insensitive, on the prompt with accents stripped. Weights add up; see the thresholds in pugi-effort.cjs. Add your own language in ~/.claude/pugi/effort-words.json (same shape; its words are added to these) and check it with node bench/effort-score.cjs.",
+  "why": { "weight": 1, "words": ["why", "how come", "what causes", "for what reason"] },
+  "design": {
+    "weight": 2,
+    "words": ["design\\w*", "architect\\w*", "invariant\\w*", "trade-?offs?", "compar\\w*", "decid\\w*", "choose", "choice", "evaluat\\w*", "assess\\w*", "think it through", "think hard", "reason\\w*", "analy[sz]\\w*", "strateg\\w*", "weigh"]
+  },
+  "debug": {
+    "weight": 2,
+    "words": ["bug", "doesn'?t work", "not working", "broken", "crash\\w*", "weird", "odd", "strange", "sometimes", "intermittent\\w*", "random\\w*", "flaky", "error", "exception", "fails?", "failing"]
+  },
+  "mechanical": {
+    "weight": -2,
+    "words": ["run", "execute", "commit", "push", "rename", "move", "list", "show", "print", "format", "restart", "install", "delete", "remove", "update the docs?", "lint", "deploy"]
+  },
+  "fast": { "weight": -2, "words": ["fast", "quick", "quickly", "briefly", "in short", "one line", "two lines", "tl;?dr", "short answer", "concise", "concisely"] },
+  "continue": ["ok", "okay", "yes", "yep", "go", "go ahead", "continue", "proceed", "do it", "next", "sure"]
+}

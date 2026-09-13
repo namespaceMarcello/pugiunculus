@@ -1,0 +1,13 @@
+{
+  "_about": "Italian additions for hooks/pugi-effort.cjs, tuned on the author's prompts. node install.cjs --effort --lang it copies this file to ~/.claude/pugi/effort-words.json; its words are added to the English defaults.",
+  "why": { "words": ["perche", "come mai", "per quale motivo"] },
+  "design": {
+    "words": ["progett\\w*", "architettur\\w*", "confront\\w*", "decid\\w*", "scegl\\w*", "valut\\w*", "rifletti\\w*", "pensaci", "ragion\\w*", "analizz\\w*", "analisi", "soppesa"]
+  },
+  "debug": { "words": ["non funziona", "non va", "stran[oaie]", "a volte", "errore", "si rompe", "fallisce"] },
+  "mechanical": {
+    "words": ["esegui", "lancia", "committa", "pusha", "rinomina", "sposta", "elenca", "mostra", "stampa", "formatta", "riavvia", "installa", "cancella", "rimuovi", "aggiorna (il|la|i) doc\\w*"]
+  },
+  "fast": { "words": ["veloce", "velocemente", "conciso", "concisa", "breve", "in breve", "brevemente", "una riga", "due righe"] },
+  "continue": ["vai", "si", "va bene", "continua", "procedi", "fallo", "avanti"]
+}
