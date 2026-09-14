@@ -124,8 +124,8 @@ Claude Code sends the whole conversation with every request and reads it from a 
 The fourth hook reads the transcript on every prompt. When the last request is older than the TTL it blocks the prompt once and shows a table: what continuing, `/compact` first and `/clear` cost now and on every later request — the tokens and what kind of tokens they are, the dollars at list price for the model in use in parentheses — and what each one loses: nothing, the detail a summary drops, the whole history. It names the model it found in the transcript and the four list prices it used. On a subscription the dollars are what your plan absorbs. Colours say which way each number goes (`NO_COLOR` or `PUGI_COLOR=0` turns them off). `↑` brings the prompt back; sent again, it goes through. A `/compact` after the last request goes through too: the cache is rebuilt either way. Slash commands are never blocked.
 
 ```
-pugi: you were away 2h 15m; the cache keeps the conversation for an hour. Your prompt is on hold.
-Model in use: Opus 5 (claude-opus-5). The conversation is 265,000 tokens.
+pugi: you were away 2h 15m; the cache keeps the conversation for an hour, so it is cold. Your prompt is on hold.
+Model in use: Opus 5 (claude-opus-5). The conversation is 265,000 tokens; the last request read 99.6% of it from the cache, this one would read 0%.
 List price per million tokens: input $5, cache write $10, cache read $0.50, output $25.
 
   ┌────────────────┬────────────────────────────────────────┬────────────────────────────────────────┬────────────────────────────────────────┐

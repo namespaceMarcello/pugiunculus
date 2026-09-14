@@ -484,8 +484,9 @@ describe('pugi-cold.cjs — the cold cache', () => {
     const file = transcript(2 * HOUR + 15 * 60e3, 265e3, 'claude-opus-5')
     const out = ask(s, file, 'commit')
     assert.equal(JSON.parse(out).decision, 'block')
-    assert.match(why(out), /away 2h 15m; the cache keeps the conversation for an hour\. Your prompt is on hold\./)
-    assert.match(why(out), /Model in use: Opus 5 \(claude-opus-5\)\. The conversation is 265,000 tokens\./)
+    assert.match(why(out), /away 2h 15m; the cache keeps the conversation for an hour, so it is cold\. Your prompt is on hold\./)
+    assert.match(why(out), /for an hour, so it is cold\./)
+    assert.match(why(out), /Model in use: Opus 5 \(claude-opus-5\)\. The conversation is 265,000 tokens; the last request read 99\.6% of it from the cache, this one would read 0%\./)
     assert.match(why(out), /List price per million tokens: input \$5, cache write \$10, cache read \$0\.50, output \$25\./)
     // Continuing writes 265k back into the cache at $10 per million: $2.65; every later request reads 265k at $0.50: $0.133.
     // /compact: the cold read at $5 plus 10k of summary at $25: $1.57, then 90k a request (fixed 55k + 35k put back): $0.045.

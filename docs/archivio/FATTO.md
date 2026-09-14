@@ -234,3 +234,9 @@ Each cell of the cold-cache table: how many tokens and of what kind (cache
 write, cache read, input plus output), the dollars at list price and the
 saving in parentheses; above it the model found in the transcript, named,
 and the four prices used. Try it: `PUGI_COLD_MINUTES=0`, a second prompt.
+
+### 2026-09-14 — the table says how warm the cache was
+
+One line above the table: how much of the conversation the last request read
+from the cache (its `cache_read_input_tokens` over its context), and that this
+one would read none of it. Try it: `PUGI_COLD_MINUTES=0`, a second prompt.

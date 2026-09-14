@@ -85,7 +85,7 @@ function lastRequest(file) {
     if (!u) continue
     const at = Date.parse(m.timestamp || '')
     if (!at) continue
-    return { at: m.timestamp, end: at, ctx: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0), model: m.message.model }
+    return { at: m.timestamp, end: at, ctx: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0), read: u.cache_read_input_tokens || 0, model: m.message.model }
   }
   return null
 }
@@ -276,8 +276,9 @@ function run(ev) {
   return {
     decision: 'block',
     reason:
-      `pugi: you were away ${hours}; the cache keeps the conversation for ${kept}. Your prompt is on hold.\n` +
-      `Model in use: ${modelName(last.model)} (${last.model || 'unknown'}). The conversation is ${n(last.ctx)} tokens.\n` +
+      `pugi: you were away ${hours}; the cache keeps the conversation for ${kept}, so it is cold. Your prompt is on hold.\n` +
+      `Model in use: ${modelName(last.model)} (${last.model || 'unknown'}). The conversation is ${n(last.ctx)} tokens; ` +
+      `the last request read ${last.ctx ? Math.round((1000 * last.read) / last.ctx) / 10 : 0}% of it from the cache, this one would read 0%.\n` +
       `List price per million tokens: input ${price(prices.input)}, cache write ${price(ttl >= 60 ? prices.write1h : prices.write5m)}, cache read ${price(prices.read)}, output ${price(prices.output)}.\n\n` +
       choices(last.ctx, fixed, prices, ttl) +
       '\n' +
