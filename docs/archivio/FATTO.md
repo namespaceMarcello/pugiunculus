@@ -217,3 +217,13 @@ after the last request passes, slash commands always pass. `bench/cold.cjs`
 replays the user's own returns after an hour: as it went, with `/compact`
 first, with `/clear`, and reads the hook's log. Four tests. Try it: leave a
 session for an hour, type anything; `node bench/cold.cjs`.
+
+### 2026-09-14 — the cold-cache table speaks in dollars
+
+The refusal is a table that reads as a sentence per row — if you continue /
+compact first / clear: what you pay now, then on every request, and what you
+lose — in dollars at list price for the model in use (a price table per model
+family in the hook), the conversation's size in tokens said once above it.
+Before, the cells were input-token equivalents and read as token counts. The
+blocked prompt is appended to `~/.claude/history.jsonl` so ↑ brings it back.
+Try it: `PUGI_COLD_MINUTES=0` in a session, a second prompt shows the table.

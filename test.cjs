@@ -485,13 +485,14 @@ describe('pugi-cold.cjs — the cold cache', () => {
     const out = ask(s, file, 'commit')
     assert.equal(JSON.parse(out).decision, 'block')
     assert.match(why(out), /away 2h 15m; the cache keeps the conversation for an hour\. Your prompt is on hold\./)
-    assert.match(why(out), /What each choice costs, in input tokens:/)
-    // Continuing rewrites 265k at 2×; every later turn re-reads 265k at 0.1×. /compact: the cold read at 1× plus 50k of summary,
-    // then 90k a turn (fixed 55k + 35k put back). /clear: nothing now, the fixed 55k a turn.
+    assert.match(why(out), /The conversation is 265k tokens\. What each choice costs, at list price for claude-opus-5:/)
+    // Opus 5 list prices: input $5, cache write for an hour $10, cache read $0.50, output $25 per million.
+    // Continuing rewrites 265k at $10: $2.65; every later request reads 265k at $0.50: $0.13. /compact: the cold read at $5
+    // plus 10k of summary at $25: $1.58, then 90k a request (fixed 55k + 35k put back): $0.05. /clear: nothing now, the fixed 55k: $0.03.
     assert.match(why(out), /┌─+┬─+┬─+┬─+┐\n.*│ if you…\s+│ you pay now\s+│ then, on every request\s+│ and you lose\s+│/)
-    assert.match(why(out), /│ continue\s+│ 530k tokens\s+\(the whole history\)\s+│ 27k tokens\s+│ nothing\s+│/)
-    assert.match(why(out), /│ \/compact first\s+│ 315k tokens \(−41%\)\s+│ 9k tokens\s+\(−66%\)\s+│ detail: a summary replaces the history │/)
-    assert.match(why(out), /│ \/clear\s+│ 0\s+\(−100%\)\s+│ 6k tokens\s+\(−79%\)\s+│ the history\s+│/)
+    assert.match(why(out), /│ continue\s+│ \$2\.65\s+│ \$0\.13\s+│ nothing\s+│/)
+    assert.match(why(out), /│ \/compact first\s+│ \$1\.58\s+\(−41%\)\s+│ \$0\.05\s+\(−66%\)\s+│ detail: a summary replaces the history │/)
+    assert.match(why(out), /│ \/clear\s+│ \$0\.00\s+\(−100%\)\s+│ \$0\.03\s+\(−79%\)\s+│ the history\s+│/)
     assert.match(why(out), /↑ brings your prompt back/)
     // The blocked prompt went to the prompt history, once; the same prompt sent again passes.
     const HISTORY = path.join(HOME, '.claude', 'history.jsonl')
@@ -500,8 +501,8 @@ describe('pugi-cold.cjs — the cold cache', () => {
     assert.equal(ask(s, file, 'commit'), '')
     assert.deepEqual(decisions(s), ['blocked', 'insisted'])
     assert.equal(history().filter((h) => h.sessionId === s).length, 1)
-    // On Fable 5.1 a warm read is 0.025×: the later turns cost a quarter, the rewrite the same.
-    assert.match(why(ask(fresh(), transcript(2 * HOUR, 265e3, 'claude-fable-5-1'), 'commit')), /│ continue\s+│ 530k tokens\s+\(the whole history\)\s+│ 7k tokens/)
+    // Fable 5.1: the cache write costs $20, the read $0.25 per million — the rewrite $5.30, every later request $0.07.
+    assert.match(why(ask(fresh(), transcript(2 * HOUR, 265e3, 'claude-fable-5-1'), 'commit')), /│ continue\s+│ \$5\.30\s+│ \$0\.07\s+│/)
     // Colours are on unless NO_COLOR or PUGI_COLOR=0.
     assert.match(why(ask(fresh(), file, 'commit', { PUGI_COLOR: '1' })), /\x1b\[31m/)
   })

@@ -35,7 +35,6 @@ const OFF_SWITCH = path.join(DIR, 'OFF')
 const LOGGING = process.env.PUGI_LOG !== '0'
 const TAIL = 512 * 1024
 
-const readWeight = (model) => (/fable-5-1|mythos-5-1/.test(model || '') ? 0.025 : 0.1)
 const k = (t) => (t ? Math.round(t / 1000) + 'k' : '0')
 
 /** The cache TTL in minutes: what the settings ask for, else the hour a subscription gets. */
@@ -118,7 +117,19 @@ function firstRequest(file) {
 }
 
 const PUT_BACK = 35e3 // what Claude Code puts back after a compaction: the summary, up to five files, the skills invoked
-const SUMMARY = 10e3 * 5 // the summary as output, at 5×
+const SUMMARY_TOKENS = 10e3 // the summary, as output
+
+// List prices per million tokens: input, cache write for an hour, for five minutes, cache read, output.
+const PRICES = [
+  [/fable-5-1|mythos-5-1/, { input: 10, write1h: 20, write5m: 12.5, read: 0.25, output: 50 }],
+  [/fable-5|mythos-5/, { input: 10, write1h: 20, write5m: 12.5, read: 1, output: 50 }],
+  [/opus/, { input: 5, write1h: 10, write5m: 6.25, read: 0.5, output: 25 }],
+  [/sonnet-5/, { input: 2, write1h: 4, write5m: 2.5, read: 0.2, output: 10 }],
+  [/sonnet/, { input: 3, write1h: 6, write5m: 3.75, read: 0.3, output: 15 }],
+  [/haiku/, { input: 1, write1h: 2, write5m: 1.25, read: 0.1, output: 5 }],
+]
+const pricesOf = (model) => (PRICES.find(([re]) => re.test(model || '')) || PRICES[2])[1]
+const dollars = (x) => (x > 0 && x < 0.005 ? '<$0.01' : '$' + (Math.round(x * 100) / 100).toFixed(2))
 const NO_COLOR = process.env.NO_COLOR !== undefined || process.env.PUGI_COLOR === '0'
 const paint = (code, s) => (NO_COLOR ? s : `\x1b[${code}m${s}\x1b[0m`)
 const red = (s) => paint(31, s)
@@ -131,32 +142,30 @@ const pct = (x, of) => {
   return (d <= 0 ? '−' : '+') + Math.abs(d) + '%'
 }
 
-/** What each choice costs now and on every later turn, in input-token equivalents, against continuing as it is: a table. */
-function choices(ctx, fixed, rw) {
+/** What each choice costs now and on every later request, in dollars at list price, against continuing as it is: a table. */
+function choices(ctx, fixed, prices, ttl) {
+  const M = 1e6
+  const write = ttl >= 60 ? prices.write1h : prices.write5m
   const restart = fixed + PUT_BACK
   const rows = [
-    ['continue', 2 * ctx, ctx * rw, 'nothing', red, green],
-    ['/compact first', ctx + SUMMARY, restart * rw, 'detail: a summary replaces the history', green, yellow],
-    ['/clear', 0, fixed * rw, 'the history', green, red],
+    // continuing rewrites the whole conversation into the cache; every later request reads it back at the cache-read price
+    ['continue', (ctx * write) / M, (ctx * prices.read) / M, 'nothing', yellow],
+    // /compact reads the cold conversation once at the input price and writes a summary; then a small context is read back
+    ['/compact first', (ctx * prices.input + SUMMARY_TOKENS * prices.output) / M, (restart * prices.read) / M, 'detail: a summary replaces the history', yellow],
+    ['/clear', 0, (fixed * prices.read) / M, 'the history', red],
   ]
   const [, now0, later0] = rows[0]
-  // The header reads as a sentence with each row: "if you continue, you pay now 530k, then 27k on every request, and you lose nothing".
-  const widths = [14, 34, 24, 38]
+  // The header reads as a sentence with each row: "if you continue, you pay now $2.65, then $0.13 on every request, and you lose nothing".
+  const widths = [14, 24, 24, 38]
   const pad = (s, w) => s + ' '.repeat(Math.max(0, w - s.length))
-  const amount = (x, of, colour, w, note) => {
-    if (of === x) return colour(pad(k(x) + ' tokens' + (note ? '  ' + note : ''), w))
-    const n = pad(k(x) + (x ? ' tokens' : ''), 12)
-    return n + colour(pad('(' + pct(x, of) + ')', w - 12))
-  }
+  const amount = (x, of, w) => (of === x ? red(pad(dollars(x), w)) : pad(dollars(x), 8) + green(pad('(' + pct(x, of) + ')', w - 8)))
   const rule = (l, m, r) => '  ' + l + widths.map((w) => '─'.repeat(w + 2)).join(m) + r
   const row = (cells) => '  │ ' + cells.join(' │ ') + ' │'
   return [
     rule('┌', '┬', '┐'),
     row([pad('if you…', widths[0]), pad('you pay now', widths[1]), pad('then, on every request', widths[2]), pad('and you lose', widths[3])]),
     rule('├', '┼', '┤'),
-    ...rows.map(([name, now, later, lose, cNum, cLose], i) =>
-      row([pad(name, widths[0]), amount(now, now0, i ? green : red, widths[1], i ? '' : '(the whole history)'), amount(later, later0, i ? green : red, widths[2]), cLose(pad(lose, widths[3]))])
-    ),
+    ...rows.map(([name, now, later, lose, cLose], i) => row([pad(name, widths[0]), amount(now, now0, widths[1]), amount(later, later0, widths[2]), (i ? cLose : green)(pad(lose, widths[3]))])),
     rule('└', '┴', '┘'),
   ].join('\n')
 }
@@ -251,8 +260,8 @@ function run(ev) {
     decision: 'block',
     reason:
       `pugi: you were away ${hours}; the cache keeps the conversation for ${kept}. Your prompt is on hold.\n` +
-      `What each choice costs, in input tokens:\n\n` +
-      choices(last.ctx, fixed, readWeight(last.model)) +
+      `The conversation is ${k(last.ctx)} tokens. What each choice costs, at list price for ${last.model || 'this model'}:\n\n` +
+      choices(last.ctx, fixed, pricesOf(last.model), ttl) +
       '\n' +
       dim('  ↑ brings your prompt back; Enter sends it and continues as it is.'),
   }
