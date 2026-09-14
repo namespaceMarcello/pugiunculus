@@ -3,9 +3,9 @@
 
 Hooks for Claude Code that cut what a coding session sends to the model. Three of
 them refuse known waste (a whole-file `Read`, `cat BIG`, a fan-out of small
-subagents). A fourth, off by default, keeps a session notebook that survives a
-context cut. A fifth, off by default, suggests an effort level per prompt and
-four skills set it. Nothing ships on an argument: a hook that does not move a
+subagents). A fourth, off by default, writes an effort suggestion, 1 to 10,
+next to each prompt; a lean reader agent, off by default, takes the large
+reads out of the conversation. Nothing ships on an argument: a hook that does not move a
 measured number is removed.
 
 Node, no dependencies, CommonJS (`.cjs`), Windows first.
@@ -60,18 +60,18 @@ replaced, not appended. This file: 200 lines.
 ## Commands
 
 ```bash
-node test.cjs                     # 55 tests: every hook decision, fed the JSON Claude Code sends
+node test.cjs                     # 38 tests: every hook decision, fed the JSON Claude Code sends
 node install.cjs                  # the three blockers into ~/.claude/settings.json
-node install.cjs --notebook       # add the session notebook (off by default)
-node install.cjs --effort         # add the effort router: prompt hook + four skills (off by default); detects your language, learns your words from history
+node install.cjs --effort         # add the effort router: one line next to each prompt (off by default); detects your language, learns your words from history
 node bench/effort-score.cjs --learn   # learn word lists from your prompts and judge them on sessions they never saw
 node bench/effort-score.cjs --check   # harder: five folds by session, a split by time, a learning curve
-node bench/effort-score.cjs --applied # how often the level the router suggested became the level the turn ran at
+node bench/effort-score.cjs --text    # did the line move thinking? turns with it against turns without, same class, same session level
 node install.cjs --lettore        # add the lean reader agent + subagent cache for an hour (off by default)
-node install.cjs --status         # what the hooks did this session, in the status line, under the one you had (off by default)
 node bench/effort-score.cjs       # does the scorer separate easy turns from hard ones, on your own prompts
 node measure-context.cjs --agents # what a subagent pays before doing anything
 node measure-context.cjs --writes # Write calls over files already open: what an Edit would have spared
+node measure-context.cjs --rereads # the same slice read again, file unchanged: what a re-read blocker would have to move
+node measure-context.cjs --shell   # shell results of 2k tokens or more, by command, with or without a filter
 node measure.cjs                  # what whole-file reads cost in your own history
 node measure-context.cjs          # where a session's cost goes: re-reading, cache writes, output, prompts
 node measure-context.cjs --tools  # which tools' results weigh most, and what the big Reads were
@@ -79,7 +79,6 @@ node measure-context.cjs --fixed  # skills, commands, agents, MCP servers listed
 node measure-context.cjs --split  # what a request carries, by category: fixed part, your words, tool results, the model's moves
 node bench/fanout.cjs --report    # the fan-out experiment
 node bench/hard.cjs --report      # the chain experiment
-node bench/notebook.cjs --report  # today vs cut vs notebook, per model and effort
 node bench/prune-sim.cjs          # the ceiling of clearing old tool results, replayed on your own transcripts
 ```
 

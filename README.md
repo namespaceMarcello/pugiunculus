@@ -10,8 +10,6 @@ Pugiunculus is three hooks that stop the ways a coding agent burns tokens on not
 
 The first two refuse once and explain the cost; if the agent really needs it, it asks again and gets it. The third refuses until the prompts change, because refusing once was measured to change nothing — its section says so, with numbers.
 
-For the tokens that are already in, there is also a **notebook**, off by default: it lets the conversation be cut without losing the thread. [Its section](#the-notebook-cut-the-conversation-keep-the-thread) has the numbers.
-
 ```bash
 git clone https://github.com/namespaceMarcello/pugiunculus && node pugiunculus/install.cjs
 ```
@@ -191,7 +189,9 @@ Eight tasks tied, one was worse with Pugiunculus, one was better. The one real l
 
 **Model choice beats every hook.** No hook can see that you picked an expensive model for mechanical work — that decision is already made by the time a tool call exists. Haiku with Pugiunculus answered all 50 questions for $0.56; Opus, needing neither hook, cost $1.99 for the same answers. No hook can fix that for you.
 
-**Claude Code already blocks exact duplicate re-reads** natively. Pugiunculus is about the first read, not the second.
+**Claude Code already blocks exact duplicate re-reads** natively. Pugiunculus is about the first read, not the second. Measured on 14 days of the author's sessions (`node measure-context.cjs --rereads`): the same slice read again, file unchanged, no compaction in between, was 11 calls and 13k tokens out of 307 Reads and 439k — 3%, in 2 sessions of 38. Nothing for a hook to move.
+
+**A wider shell blocker has no clean target.** Shell results are 58% of all tool-result tokens on the same 14 days (`node measure-context.cjs --shell`), and the ones of 2k tokens or more are 100 results, 324k tokens, 15% of all tool results. But 137k of those already had a filter on the pipe; the biggest of the rest were whole-file `cat`s from sessions before the shell blocker existed, repeats the blocker let through on purpose, and `sed` ranges under 500 lines that were heavy in bytes — deliberate slices, the same thing the Read blocker lets through. What a refusal could still act on is under 100k tokens in 14 days, spread over commands whose output cannot be sized before they run.
 
 **Effort levels change nothing here.** The obvious cheaper lever would be to raise the agent's reasoning budget and hope it picks Grep on its own. Tested: 20 more Haiku runs with Pugiunculus off, `effortLevel` set to `low` for one batch and `xhigh` for the other.
 
@@ -209,42 +209,11 @@ Either way the practical answer is the same: **turning that dial did not stop a 
 
 ---
 
-## The notebook: cut the conversation, keep the thread
+## Tried, measured, taken out
 
-The hooks above stop waste on its way in. This part is about what is already in.
+Two things were built, measured and removed on 2026-09-14, on the rule that what moves no measured number does not stay. Their rows are in the git history; what happened is in `docs/archivio/FATTO.md`.
 
-**Claude Code sends the whole conversation with every request.** Over one week of real sessions (20 of them, 2,948 requests — `node measure-context.cjs` does the same on yours), re-reading the conversation was **73% of what the sessions cost**. The median request carried 274k tokens of it; one in ten carried 691k. Not one session was ever compacted, because a 1M window never fills. And the prompts typed by the human, every word of them, were **0.15%**.
-
-So the lever is not the prompt. It is how much gets re-read, and the only way to shrink that is to cut: `/autocompact 250k` makes Claude Code summarize the conversation whenever it passes 250k tokens, and `/clear` drops it entirely. The catch is what a cut forgets — and a summary written by the model is exactly where a "don't touch arena.ts" goes missing.
-
-The notebook is what survives the cut. Hooks write it, not the model:
-
-- **the requests, word for word** — they are small enough that nothing needs summarizing
-- **the files Claude changed**, taken from the tool calls themselves
-- **one line of what was done**: the first line of each answer that changed a file
-
-After a compaction, a `/clear` or a resume, a `SessionStart` hook puts it back into the context. That is all. There is no rule for the model to follow and nothing for it to remember to update — which matters, because [telling the agent doesn't work](#telling-the-agent-doesnt-work-stopping-it-does).
-
-```
-# Session notebook — KittenCare
-## Requests, verbatim, oldest first
-- [10:02] quando un gattino mangia deve fare un verso. Non toccare arena.ts
-- [10:40] è troppo forte, abbassalo
-## Files changed
-src/cat.ts, src/audio.ts
-## Done
-- [10:38] Aggiunto il verso quando il gattino mangia.
-```
-
-It lives in `~/.claude/pugi/notebook/`, one per session, never in your repo: `<project>-<id>.md` to read, a `.jsonl` record behind it. `/clear` hands the notebook on to the session it starts, and a commit prints a one-line reminder that `/clear` now starts light. Every hook call costs about 64 ms. It is off by default:
-
-```bash
-node install.cjs --notebook
-```
-
-### Does it work? Not yet, and here is the table that says so
-
-33 long sessions on a 40,000-line codebase. Each one opens with two things that have to last — a tag every answer must start with, and a codename asked for at the very end — plus a large read, then fourteen exact-value questions, one per turn, then the codename. Three arms, identical questions: **today** (Claude Code as it ships), **cut** (`--autocompact 100k`, the smallest window allowed), **notebook** (the same cut, with the notebook put back). Haiku 4.5 at its default, Sonnet 5 and Opus 5 at all five effort levels, one session per cell. $67 of model time.
+**The session notebook.** Claude Code sends the whole conversation with every request: over one week of real sessions (20 of them, 2,948 requests — `node measure-context.cjs` does the same on yours), re-reading it was 73% of what the sessions cost, the median request carried 274k tokens, and not one session was ever compacted, because a 1M window never fills. The lever is to cut — `/autocompact`, `/clear` — and the catch is what a cut forgets. The notebook was what survived it, written by hooks and not by the model: the requests word for word, the files changed, one line per thing done, put back after every compaction, `/clear` or resume, with no rule for the model to follow. Benchmarked on 33 long sessions on a 40,000-line codebase, three arms with identical questions — **today** (Claude Code as it ships), **cut** (`--autocompact 100k`), **notebook** (the same cut, with the notebook put back) — Haiku 4.5, Sonnet 5 and Opus 5 at every effort level, $67 of model time:
 
 | | correct | codename kept | tag kept | sessions cut |
 |---|---|---|---|---|
@@ -252,21 +221,19 @@ node install.cjs --notebook
 | cut | 99% | 91% | 84% | 9 / 11 |
 | notebook | 100% | 100% | 81% | 10 / 11 |
 
-**The mechanism does work.** 26 compactions fired at a median of 68k tokens, left 6k behind, and took 102 seconds each. The notebook went back into the context on every single cut — 13 injections for 13 cuts — with no instruction for the model to follow.
+The mechanism worked: 13 injections for 13 cuts, no accuracy lost, the codename never lost. The gain never showed. The arm that never cuts loses the standing rule a quarter of the time on its own, so the probe measures how consistently a model obeys an old instruction, not what a cut costs; and the same Haiku arm, same questions, run twice, cost $0.73 and $1.25 — a spread wider than every difference between arms. Sixteen turns never reach the size where cutting pays. Not a failure: a mechanism that worked, without the measurement that would have justified it. It went.
 
-**The memory probe can't see anything through the noise.** Read the `tag` column: the *today* arm never cuts anything and still loses the standing rule a quarter of the time. On Sonnet it swings between 1/8 and 8/8 with no cut in sight, so it is measuring how consistently a model follows an old instruction, not what a cut costs. On Opus there was nothing to lose in the first place: 8/8 in all fifteen sessions, cut or not.
+**The status line and its recap.** One sentence at the bottom of the terminal with what the hooks did in the session, and a recap after each answer. A window on the hooks, not a saving: it moved no number, and it went with the same rule. The router's own line under the prompt it judged — `pugi: effort → 2/10 (mechanical, short)` — stays, since the hook writes it anyway.
 
-**The cost question is not answered here either.** Pooled over the five efforts: Sonnet $1.98 today against $1.69 with the notebook, Opus $2.45 against $2.59, Haiku $1.25 against $0.67. But the same Haiku arm, same questions, run twice, cost $0.73 and $1.25 — a spread wider than every difference in that list. Cutting pays in proportion to how far a session runs past the threshold, and sixteen turns do not run past it: the median request in a real session carries 274k tokens, which this benchmark never approaches.
-
-So it ships **off**, and stays off until a benchmark shaped like a real session — dozens of turns, context in the hundreds of thousands, repeated runs — says otherwise. What it has earned so far is narrow and worth stating exactly: it costs no accuracy (100% correct, 100% codename, in every arm it ran), it costs 64 ms per hook call, and it was the only arm that never lost the codename after a cut. That is not a win. It is a mechanism that works, waiting for the measurement that would justify turning it on.
+**The pruner** was closed before being built: `docs/potatore.md` has the reasons, and `node bench/prune-sim.cjs` replays its ceiling on your own transcripts.
 
 ---
 
 ## The effort router: think as much as the request needs
 
-The model's own thinking is the largest single block a session re-reads — 20% of everything, measured with `node measure-context.cjs --split` on 14 days of real work — and it is produced at whatever effort the session was set to, whether the prompt was "commit e push" or a design question. Nothing in Claude Code lets a hook change the effort of a request, but a skill can: a skill whose front matter says `effort: low` runs the rest of the turn at low, and beats the session level. Verified in a fresh session started with `--effort max`: the transcript records the skill's request at `low`.
+The model's own thinking is the largest single block a session re-reads — 20% of everything, measured with `node measure-context.cjs --split` on 14 days of real work — and it is produced at whatever effort the session was set to, whether the prompt was "commit e push" or a design question. Nothing in Claude Code lets a hook change the effort of a request. A skill can, and the first version of the router had four of them for the agent to invoke: measured over two days they landed 8 times in 28 (a Claude Code bug, [#81313](https://github.com/anthropics/claude-code/issues/81313)), and even landing every time the ceiling was −1.1% of the sessions' cost (`node bench/effort-score.cjs --savings`, 14 days). So the router does the one thing a hook can do reliably: it says.
 
-So the router is one hook and four skills. On every prompt, `hooks/pugi-effort.cjs` scores the text with a fixed word list — no model, no network — and adds one line next to it: *Effort suggested for this turn: xhigh*. The agent invokes the matching skill (`effort-low`, `effort-medium`, `effort-xhigh`, `effort-max`) as its first move; `high` is the session's own level and gets no suggestion. A bare "vai" keeps the previous turn's level. The prompt itself is never touched.
+The router is one hook. On every prompt, `hooks/pugi-effort.cjs` scores the text with a word list — no model, no network — and adds one line next to it: *Effort suggested for this turn: 3/10 (mechanical, short).* Nothing else: no instruction on how to think, no skill to invoke, no parameter set. The number is the raw score on a 1-to-10 scale. On the author's 14 days the score runs from −5 to +6 and the thinking of the turns follows it step by step — 214 tokens at −5, 1.6k at 0, 4.8k at +2, 5.3k at +4 — so folding it into five named levels was throwing most of it away. A bare "vai" keeps the previous turn's number. The prompt itself is never touched.
 
 Whether a word list can tell an easy turn from a hard one is the whole question, so `bench/effort-score.cjs` replays every typed prompt of your own history through the scorer and measures what the turn it started actually cost:
 
@@ -281,9 +248,10 @@ Whether a word list can tell an easy turn from a hard one is the whole question,
 433 prompts, 14 days. Restricted to the 228 turns whose session sat at the same effort, so thinking is comparable, the turns scored `max` thought 16× the ones scored `low`. The list separates. What it does not do yet is prove the saving: that is a week of `node measure-context.cjs --split` with the router on, and it is why the router ships **off**.
 
 ```bash
-node install.cjs --effort       # the hook, and the four skills into ~/.claude/skills (they load with your next session)
+node install.cjs --effort       # the hook; detects your language, learns your words from your history
 node bench/effort-score.cjs     # the table above, on your own prompts; --samples prints ten prompts per level to read by eye
-node install.cjs --no-effort    # takes the hook and its skills out; a skill of yours with the same name is left alone
+node bench/effort-score.cjs --text   # did the line move thinking? turns with it against turns without, same class, same session level
+node install.cjs --no-effort    # takes the hook and the word pack out
 ```
 
 The words are English by default, in `hooks/effort-words.json`, and the installer does not expect you to write your own. `node install.cjs --effort` reads your last 30 days of prompts, tells which language they are in, and adds that language's pack when there is one (`hooks/effort-words.it.json` today; `--lang xx` picks one by hand). Then, with a hundred prompts or more of history, it **learns your words**: within each effort level your sessions ran at, the turns that thought most are hard and the ones that thought least are easy, and a word or pair of words that keeps company with hard turns becomes a hard signal, one that keeps company with easy turns a mechanical one, in whatever language you write. Nothing learned is trusted on the data it came from: the lists are learned on half the sessions and judged on the other half by how often they rank a hard turn above an easy one, and they are written to `~/.claude/pugi/effort-words.json` only when they beat what is already there.
@@ -300,9 +268,7 @@ On the author's 814 prompts, judged on sessions the words never saw:
 
 One split can be lucky, so `node bench/effort-score.cjs --check` does it three harder ways on the same 817 prompts: five folds by session, every session judged once by words that never saw it — defaults 63%, learned 76% on the mean, and better on every fold; a split by time, learned on the first three weeks and judged on the last — 55% to 67%, the weakest, because the last week's work was different from the rest; and a learning curve — 50 prompts give 63%, 100 give 67%, 200 give 72%, which is why the installer asks for a hundred.
 
-On Fable 5.1 with a subscription, a mid-session effort change keeps the prompt cache; on other models it re-reads the whole conversation once, so do not run this router there.
-
-**The catch, measured the same day.** A skill's `effort:` applies every time when *you* invoke the skill as a slash command, across turns. When the *model* invokes it through the Skill tool — the router's path — it applied 0 times in 2 in fresh sessions and 4 times in 6 in a long interactive one, with no pattern found. `node bench/effort-score.cjs --applied` joins the router's log with the transcripts and counts how often the suggested level became the turn's level: on the author's first two days, 6 of 17, and 2 of those were the session's own level. So the router suggests reliably and lands unreliably. It is a known Claude Code bug — [#81313](https://github.com/anthropics/claude-code/issues/81313): the skill's `effort:` is applied on slash-command invocation and ignored when the model invokes the skill through the Skill tool; [#81318](https://github.com/anthropics/claude-code/issues/81318) reports the same for `model:` and `effort:` since v2.1.220. The router stays opt-in, the number is in `docs/STATO.md`, and the reliable levers remain `/effort` and a typed slash skill until the fix lands.
+**Does the line alone move thinking?** `node bench/effort-score.cjs --text` compares, at the same session level and the same scored class, the turns that had the line next to the prompt with the turns that did not. On the author's first two days — 27 turns with the line — the one row with ten turns on both sides, a `max` session and prompts scored `medium`, reads 1.1k thinking per turn against 1.1k, and 378 per request against 540; the other rows have one to six turns and go both ways. An anecdote. The number is a week away, and it is why the router still ships **off**. One thing the same day did settle: counting how many times a signal fires, instead of whether it fires, separated hard turns from easy ones worse — 57% against 75% — so each signal counts once.
 
 ### Reading in a lean agent
 
@@ -318,22 +284,6 @@ A file read in the main conversation stays there and is re-read by every later r
 The whole-file `Read` refusal names it when it is installed. Hand it large reads and explorations across files with a complete brief — which files, what to look for, what shape of answer; open thirty lines yourself.
 
 One number that closed a hook before it was written: `node measure-context.cjs --writes` counts `Write` calls over files the session had already opened, the case where an `Edit` would have carried only the changed lines. 36 calls in 14 days, 111k tokens. A blocker there would move nothing worth its own refusals.
-
----
-
-## See it while it happens
-
-Two ways to watch the hooks work without opening a log.
-
-**The status line.** `node install.cjs --status` puts one sentence at the bottom of the terminal, refreshed on every event of the session, in the language of the word pack installed:
-
-```
-pugi │ 4 whole-file reads stopped (~14k tokens) · 1 insisted · effort: 3× low, 7× medium, 2× max · 1 read handed to the lean agent (≈39k tokens kept out of the chat)
-```
-
-The tokens of a stopped read are what it would have carried, not a saving; the savings are the measured ones above. The status line you had keeps running: its rows print first, ours after, and `--no-status` gives yours back as it was.
-
-**A recap for you.** With the status line come two sentences from `hooks/pugi-recap.cjs`, returned as `systemMessage`, the field a hook uses to speak to you rather than to the model, so they cost the conversation nothing: after each answer, what the hooks did in that turn, if anything — *Pugiunculus in questo turno: 1 lettura intera fermata (~9k token); effort: 1 volta low.* — and at session start, what they did in the last 24 hours across sessions. The effort router adds its own line under the prompt it judged: `pugi: effort → low (mechanical, short)`. The blockers already show their refusal as the tool's error, so they add nothing.
 
 ---
 
@@ -362,6 +312,8 @@ node measure-context.cjs          # where a session's cost goes: re-reading the 
 node measure-context.cjs --tools  # which tools' results weigh most, and what the big Reads were (slices, insisted, hook off)
 node measure-context.cjs --fixed  # every skill, command, agent and MCP server listed to the model on each move, and which ones you never use
 node measure-context.cjs --split  # what a request carries, by category: the fixed part, your words, tool results, the model's text, calls and thinking
+node measure-context.cjs --rereads # the same slice read again, file unchanged: what a re-read blocker would have to move
+node measure-context.cjs --shell   # shell results of 2k tokens or more, by command, with or without a filter
 node bench/prune-sim.cjs          # what clearing old tool results would save, replayed on your sessions, cache re-writes included
 ```
 
@@ -382,7 +334,6 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 - **Everything logged:** `~/.claude/pugi/log.jsonl` records every decision — `slice`, `small`, `blocked`, `insisted`, `rebatched`, `escaped`, `off` — so you can tell whether behaviour changed, not just whether the bill did.
 - **The fan-out experiment ships:** `node bench/fanout.cjs --src <your codebase> --model haiku --runs 5` runs it against your own code, headless, and `--report` prints the table. The raw rows behind the tables above are in `bench/fanout-results.jsonl` (refuse-until-changed) and `bench/fanout-results-v1.jsonl` (refuse once).
 - **So does the chain benchmark:** `node bench/hard.cjs --src <your codebase> --model haiku` (add `--off` for the control, `--per 25` for the long sessions, `--list` to see the questions) and `--report`. Its rows are in `bench/hard-results-*.jsonl`, one file per arm.
-- **So does the notebook experiment:** `node bench/notebook.cjs --src <your codebase> --models sonnet --efforts high --sessions 1` runs all three arms — today, cut, notebook — and `--report` prints the table. Unlike the other two it drives one session over many turns (`--input-format stream-json`) instead of a one-shot prompt, which is the only way a context grows enough to be cut. Rows in `bench/notebook-results.jsonl`.
 - **The hooks are tested:** `node --test test.cjs` feeds each one the JSON Claude Code would and checks every decision on this page — including five hooks fired at the same instant.
 
 ---
@@ -402,7 +353,6 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 | `PUGI_READ_OFF=1` · `PUGI_BASH_OFF=1` · `PUGI_FANOUT_OFF=1` | disable one hook only, so a control group differs in one thing |
 | `~/.claude/pugi/OFF` | same, as a file — subagents do not inherit your shell, so this is the one that gives you a real control group |
 | `PUGI_LOG=0` | turn the log off entirely |
-| `node install.cjs --notebook` | add the [session notebook](#the-notebook-cut-the-conversation-keep-the-thread) — off by default, kept by later installs; `--no-notebook` takes it out |
 
 ```bash
 node install.cjs --uninstall

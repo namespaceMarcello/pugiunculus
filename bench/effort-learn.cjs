@@ -49,6 +49,7 @@ function collect(days, root = ROOT) {
         const u = rec.u
         const counted = u.output_tokens_details && u.output_tokens_details.thinking_tokens
         turn.thinking += typeof counted === 'number' ? counted : Math.max(0, (u.output_tokens || 0) - rec.visible / CHARS_PER_TOKEN)
+        turn.model = rec.model
         turn.calls += rec.calls
         turn.requests++
         const w1h = (u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens) || 0
@@ -72,13 +73,11 @@ function collect(days, root = ROOT) {
       if (!id) continue
       let rec = turn.reqs.get(id)
       if (!rec) {
-        rec = { u, visible: 0, calls: 0 }
+        rec = { u, visible: 0, calls: 0, model: (m.message.model || '').replace(/^claude-/, '') }
         turn.reqs.set(id, rec)
         turn.effort = turn.effort || m.effort || null
         if (!turn.sid) turn.sid = m.sessionId || m.session_id || session
       }
-      // The effort the turn ended up running at: the last request's, after any skill the agent invoked.
-      if (m.perTurnEffort) turn.perTurn = m.perTurnEffort
       rec.u = u // streaming: the last line carries the final usage
       const c = m.message.content
       if (Array.isArray(c))
@@ -104,7 +103,7 @@ function collect(days, root = ROOT) {
   return { turns, totalCost }
 }
 
-/** Scores every turn in session order, so a continuation sees the previous turn's level. */
+/** Scores every turn in session order, so a continuation sees the previous turn's suggestion. */
 function scoreAll(score, turns) {
   let prev = null
   let last = null
@@ -114,8 +113,9 @@ function scoreAll(score, turns) {
       last = t.session
     }
     const r = score(t.text, prev)
-    prev = r.level
+    prev = r
     t.level = r.level
+    t.grade = r.grade
     t.score = r.score
     t.signals = r.signals
   }

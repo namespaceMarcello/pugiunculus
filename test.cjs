@@ -363,105 +363,6 @@ describe('pugi-bash.cjs — the shell back door', () => {
   })
 })
 
-// ---------------------------------------------------------- pugi-notebook.cjs
-
-describe('pugi-notebook.cjs — the session notebook', () => {
-  const NB = 'pugi-notebook.cjs'
-  const BOOK = path.join(PUGI_DIR, 'notebook')
-  const KITTEN = path.join(SANDBOX, 'KittenCare')
-  const ev = (session, event, extra, cwd = KITTEN) => ({ session_id: session, cwd, hook_event_name: event, ...extra })
-  const say = (s, prompt, extra) => call(NB, ev(s, 'UserPromptSubmit', { prompt }), extra)
-  const edit = (s, rel) => call(NB, ev(s, 'PostToolUse', { tool_name: 'Edit', tool_input: { file_path: path.join(KITTEN, rel) } }))
-  const stop = (s, text) => call(NB, ev(s, 'Stop', { last_assistant_message: text, stop_hook_active: false }))
-  const start = (s, source, cwd) => call(NB, ev(s, 'SessionStart', { source }, cwd))
-  const injected = (out) => (out ? JSON.parse(out).hookSpecificOutput.additionalContext : '')
-
-  test('your words come back verbatim after a compaction', () => {
-    const s = fresh()
-    say(s, 'quando un gattino mangia deve fare un verso. Non toccare arena.ts')
-    assert.match(injected(start(s, 'compact')), /quando un gattino mangia deve fare un verso\. Non toccare arena\.ts/)
-  })
-
-  test('a new session gets nothing; an empty notebook injects nothing', () => {
-    const s = fresh()
-    assert.equal(start(s, 'compact'), '')
-    say(s, 'ciao')
-    assert.equal(start(s, 'startup'), '')
-  })
-
-  test('the files Claude changed: relative to the project, each once, latest last', () => {
-    const s = fresh()
-    say(s, 'aggiungi il verso')
-    edit(s, 'src/audio.ts')
-    edit(s, 'src/cat.ts')
-    edit(s, 'src/audio.ts')
-    assert.match(injected(start(s, 'compact')), /src\/cat\.ts, src\/audio\.ts/)
-  })
-
-  test('a turn that changed files leaves one line of what it did; a chat turn leaves none', () => {
-    const s = fresh()
-    say(s, 'aggiungi il verso')
-    stop(s, 'Solo una risposta, nessuna modifica.')
-    edit(s, 'src/audio.ts')
-    stop(s, '**Aggiunto il verso quando il gattino mangia.**\n\nCome provarlo: premi T.')
-    const ctx = injected(start(s, 'compact'))
-    assert.match(ctx, /Aggiunto il verso quando il gattino mangia\./)
-    assert.doesNotMatch(ctx, /Solo una risposta|Come provarlo|\*\*/)
-  })
-
-  test('/clear hands the notebook to the session it starts', () => {
-    const a = fresh()
-    const b = fresh()
-    say(a, 'usa miao2.wav, non miao1')
-    call(NB, ev(a, 'SessionEnd', { reason: 'clear' }))
-    assert.match(injected(start(b, 'clear')), /usa miao2\.wav, non miao1/)
-    say(b, 'ora abbassa il volume')
-    assert.match(injected(start(b, 'compact')), /usa miao2\.wav, non miao1[\s\S]*ora abbassa il volume/)
-  })
-
-  test('/clear in another project does not pick it up', () => {
-    const a = fresh()
-    const b = fresh()
-    const other = path.join(SANDBOX, 'Altro')
-    call(NB, ev(a, 'UserPromptSubmit', { prompt: 'solo per Altro' }, other))
-    call(NB, ev(a, 'SessionEnd', { reason: 'clear' }, other))
-    assert.equal(start(b, 'clear'), '')
-  })
-
-  test('it fits in what Claude Code will inject, newest requests kept', () => {
-    const s = fresh()
-    for (let i = 0; i < 40; i++) say(s, `richiesta ${i} ` + 'x'.repeat(1400))
-    say(s, 'ultima richiesta')
-    const ctx = injected(start(s, 'compact'))
-    assert.ok(ctx.length <= 10000, 'too long: ' + ctx.length)
-    assert.match(ctx, /ultima richiesta/)
-    assert.match(ctx, /left out/)
-  })
-
-  test('a readable .md named after the project', () => {
-    const s = fresh()
-    say(s, 'aggiungi il verso')
-    const md = path.join(BOOK, 'KittenCare-' + s.slice(-8) + '.md')
-    assert.ok(fs.existsSync(md), 'missing ' + md)
-    assert.match(fs.readFileSync(md, 'utf8'), /aggiungi il verso/)
-  })
-
-  test('a commit suggests /clear', () => {
-    const s = fresh()
-    const out = call(NB, ev(s, 'PostToolUse', { tool_name: 'Bash', tool_input: { command: 'git add -A && git commit -m "verso"' } }))
-    assert.match(JSON.parse(out).systemMessage, /\/clear/)
-    assert.equal(call(NB, ev(s, 'PostToolUse', { tool_name: 'Bash', tool_input: { command: 'git status' } })), '')
-  })
-
-  test('the OFF switch keeps it silent', () => {
-    const s = fresh()
-    say(s, 'non segnarlo', { PUGI_OFF: '1' })
-    assert.equal(start(s, 'compact'), '')
-  })
-})
-
-// ------------------------------------------------------------------ install.cjs
-
 // ---------------------------------------------------------- pugi-effort.cjs
 
 describe('pugi-effort.cjs — the effort router', () => {
@@ -494,19 +395,22 @@ describe('pugi-effort.cjs — the effort router', () => {
     assert.equal(score('vai', 'max').level, 'medium')
   })
 
-  test('the hook suggests a skill for every level but high, and logs it', () => {
+  test('the hook writes one line, a number out of ten and the signals, nothing else; and logs it', () => {
     const s = fresh()
     const low = ask(s, 'commit e push', IT)
-    assert.match(suggested(low), /Effort suggested for this turn: low .*effort-low/)
-    assert.equal(JSON.parse(low).systemMessage, 'pugi: effort → low (mechanical, short)')
-    assert.equal(ask(s, 'perché la cache scade dopo un\'ora?', IT), '')
-    assert.deepEqual(decisions(s), ['suggest', 'none'])
+    assert.equal(suggested(low), 'Effort suggested for this turn: 2/10 (mechanical, short).')
+    assert.equal(JSON.parse(low).systemMessage, 'pugi: effort → 2/10 (mechanical, short)')
+    assert.equal(suggested(ask(s, 'perché la cache scade dopo un\'ora?', IT)), 'Effort suggested for this turn: 6/10 (why).')
+    assert.deepEqual(decisions(s), ['suggest', 'suggest'])
+    assert.equal(score('commit and push').grade, 2)
+    assert.equal(score(DESIGN).grade, 6) // English only: the two question marks
+    assert.equal(it(DESIGN).grade, 9)
   })
 
-  test('a bare "vai" keeps the level of the previous turn', () => {
+  test('a bare "vai" keeps the suggestion of the previous turn', () => {
     const s = fresh()
-    assert.match(suggested(ask(s, DESIGN, IT)), /: max /)
-    assert.match(suggested(ask(s, 'vai', IT)), /: max \(continuation\)/)
+    assert.match(suggested(ask(s, DESIGN, IT)), /: 9\/10 /)
+    assert.equal(suggested(ask(s, 'vai', IT)), 'Effort suggested for this turn: 9/10 (continuation).')
   })
 
   test('off keeps the log; slash commands are ignored; a broken event goes through untouched', () => {
@@ -516,78 +420,6 @@ describe('pugi-effort.cjs — the effort router', () => {
     assert.equal(ask(s, '/effort max'), '')
     assert.deepEqual(decisions(s), ['off'])
     assert.equal(call(EF, { session_id: s }), '')
-  })
-})
-
-// ---------------------------------------------------------- pugi-status.cjs
-
-describe('pugi-status.cjs — the status line', () => {
-  const ST = 'pugi-status.cjs'
-  const show = (ev) => call(ST, ev)
-
-  test('reads the log of this session and the numbers Claude Code hands it; nothing of another session', () => {
-    const s = fresh()
-    const other = fresh()
-    fs.mkdirSync(PUGI_DIR, { recursive: true })
-    const rows = [
-      { ts: 't', session: s, file: 'a.ts', decision: 'blocked', bytes: 40000 },
-      { ts: 't', session: s, file: 'a.ts', decision: 'insisted', bytes: 40000 },
-      { ts: 't', session: s, tool: 'Agent', decision: 'blocked' },
-      { ts: 't', session: s, hook: 'effort', decision: 'suggest', level: 'low' },
-      { ts: 't', session: s, hook: 'effort', decision: 'suggest', level: 'low' },
-      { ts: 't', session: s, hook: 'effort', decision: 'none', level: 'high' },
-      { ts: 't', session: other, file: 'b.ts', decision: 'blocked', bytes: 900000 },
-    ]
-    fs.appendFileSync(LOG, rows.map((r) => JSON.stringify(r)).join('\n') + '\n')
-    const out = show({ session_id: s, context_window: { used_percentage: 42.4 }, prompt_cache: { hit_ratio: 0.913 }, cost: { total_cost_usd: 1.234 } })
-    assert.equal(out, 'pugi │ 1 whole-file read stopped (~10k tokens) · 1 insisted · 1 fan-out stopped · effort: 2× low')
-  })
-
-  test('an empty session, and a broken input, still print a line; the status line that was there runs first', () => {
-    assert.equal(show({ session_id: fresh() }), 'pugi │ nothing to stop yet')
-    assert.equal(call(ST, 'not json'), 'pugi │ nothing to stop yet')
-    fs.writeFileSync(path.join(PUGI_DIR, 'status-previous.json'), JSON.stringify({ type: 'command', command: 'node -e "process.stdout.write(\'mine \' + JSON.parse(require(\'fs\').readFileSync(0, \'utf8\')).session_id)"' }))
-    const s = fresh()
-    assert.equal(show({ session_id: s }), 'mine ' + s + '\npugi │ nothing to stop yet')
-    fs.rmSync(path.join(PUGI_DIR, 'status-previous.json'))
-  })
-
-  test('speaks Italian when the Italian word pack is installed', () => {
-    const s = fresh()
-    fs.appendFileSync(LOG, JSON.stringify({ ts: 't', session: s, file: 'a.ts', decision: 'blocked', bytes: 40000 }) + '\n')
-    fs.writeFileSync(path.join(PUGI_DIR, 'effort-words.json'), JSON.stringify({ _lang: 'it' }))
-    try {
-      assert.equal(show({ session_id: s }), 'pugi │ 1 lettura intera fermata (~10k token)')
-    } finally {
-      fs.rmSync(path.join(PUGI_DIR, 'effort-words.json'))
-    }
-  })
-
-  test('the recap: a sentence after a turn about that turn only, and one at session start about the last day', () => {
-    const RC = 'pugi-recap.cjs'
-    const s = fresh()
-    const now = new Date().toISOString()
-    const old = new Date(Date.now() - 2 * 24 * 3600e3).toISOString()
-    fs.appendFileSync(LOG, [{ ts: old, session: s, file: 'z.ts', decision: 'blocked', bytes: 4000 }, { ts: now, session: s, file: 'a.ts', decision: 'blocked', bytes: 40000 }, { ts: now, session: s, hook: 'effort', decision: 'suggest', level: 'max' }].map((r) => JSON.stringify(r)).join('\n') + '\n')
-    const first = call(RC, { session_id: s, hook_event_name: 'Stop' })
-    assert.equal(JSON.parse(first).systemMessage, 'Pugiunculus this turn: 2 whole-file reads stopped (~11k tokens); effort: 1× max.')
-    assert.equal(call(RC, { session_id: s, hook_event_name: 'Stop' }), '') // nothing new since
-    fs.appendFileSync(LOG, JSON.stringify({ ts: new Date(Date.now() + 1000).toISOString(), session: s, file: 'b.ts', decision: 'insisted', bytes: 40000 }) + '\n')
-    assert.equal(JSON.parse(call(RC, { session_id: s, hook_event_name: 'Stop' })).systemMessage, 'Pugiunculus this turn: 1 insisted.')
-    const start = JSON.parse(call(RC, { session_id: fresh(), hook_event_name: 'SessionStart' })).systemMessage
-    assert.match(start, /^Pugiunculus in the last 24 hours: /)
-    assert.doesNotMatch(start, /~1k/) // the two-day-old row is out
-  })
-
-  test('the reader agents of the session count, with what the lean ones spared', () => {
-    const s = fresh()
-    const t = path.join(SANDBOX, 'projects', 'p', s + '.jsonl')
-    const dir = path.join(SANDBOX, 'projects', 'p', s, 'subagents')
-    fs.mkdirSync(dir, { recursive: true })
-    const usage = (n) => JSON.stringify({ type: 'assistant', message: { id: 'm', usage: { input_tokens: 2, cache_creation_input_tokens: n, cache_read_input_tokens: 0 } } }) + '\n'
-    fs.writeFileSync(path.join(dir, 'agent-1.jsonl'), usage(9000))
-    fs.writeFileSync(path.join(dir, 'agent-2.jsonl'), usage(47000))
-    assert.equal(show({ session_id: s, transcript_path: t }), 'pugi │ 1 read handed to the lean agent (≈39k tokens kept out of the chat)')
   })
 })
 
@@ -633,39 +465,24 @@ describe('install.cjs', () => {
       .filter((e) => (e.hooks || []).some((h) => re.test(h.command))).length
   const MINE = { hooks: [{ type: 'command', command: 'echo mine' }] }
 
-  test('the notebook is opt-in, stays once chosen, and never touches other hooks', () => {
-    fs.mkdirSync(path.dirname(SETTINGS), { recursive: true })
-    fs.writeFileSync(SETTINGS, JSON.stringify({ hooks: { Stop: [MINE] } }))
-    install()
-    assert.equal(count(/pugi-notebook/), 0)
-    assert.equal(count(/pugi(-bash|-agents)?\.cjs/), 3)
-    install('--notebook')
-    install('--notebook')
-    assert.equal(count(/pugi-notebook/), 7)
-    install()
-    assert.equal(count(/pugi-notebook/), 7)
-    install('--no-notebook')
-    assert.equal(count(/pugi-notebook/), 0)
-    install('--uninstall')
-    assert.equal(count(/pugi/), 0)
-    assert.deepEqual(JSON.parse(fs.readFileSync(SETTINGS, 'utf8')).hooks.Stop, [MINE])
-  })
-
-  test('the effort router is opt-in, writes four skills, leaves a skill that is not ours, and takes its own out again', () => {
+  test('the effort router is opt-in, writes no skill, removes the skills an earlier version wrote, and leaves one that is not ours', () => {
     const SKILLS = path.join(HOME, '.claude', 'skills')
     const theirs = '---\nname: effort-low\n---\nmine\n'
+    const ours = '---\nname: effort-max\neffort: max\n---\n<!-- written by pugi install.cjs; node install.cjs --no-effort removes it -->\n'
     fs.writeFileSync(SETTINGS, JSON.stringify({ hooks: {} }))
     fs.mkdirSync(path.join(SKILLS, 'effort-low'), { recursive: true })
     fs.writeFileSync(path.join(SKILLS, 'effort-low', 'SKILL.md'), theirs)
+    fs.mkdirSync(path.join(SKILLS, 'effort-max'), { recursive: true })
+    fs.writeFileSync(path.join(SKILLS, 'effort-max', 'SKILL.md'), ours)
     install('--effort')
     assert.equal(count(/pugi-effort/), 1)
-    for (const l of ['medium', 'xhigh', 'max']) assert.match(fs.readFileSync(path.join(SKILLS, 'effort-' + l, 'SKILL.md'), 'utf8'), new RegExp('^effort: ' + l + '$', 'm'))
+    assert.ok(!fs.existsSync(path.join(SKILLS, 'effort-max')))
+    for (const l of ['medium', 'xhigh']) assert.ok(!fs.existsSync(path.join(SKILLS, 'effort-' + l)))
     assert.equal(fs.readFileSync(path.join(SKILLS, 'effort-low', 'SKILL.md'), 'utf8'), theirs)
     install()
     assert.equal(count(/pugi-effort/), 1)
     install('--no-effort')
     assert.equal(count(/pugi-effort/), 0)
-    assert.ok(!fs.existsSync(path.join(SKILLS, 'effort-max')))
     assert.equal(fs.readFileSync(path.join(SKILLS, 'effort-low', 'SKILL.md'), 'utf8'), theirs)
   })
 
@@ -705,30 +522,5 @@ describe('install.cjs', () => {
     install('--uninstall')
     assert.ok(!fs.existsSync(AGENT))
     assert.equal(read().subagentPromptCacheTtl, '5m')
-  })
-
-  test('the status line is opt-in, keeps the one that was there, and gives it back', () => {
-    const read = () => JSON.parse(fs.readFileSync(SETTINGS, 'utf8'))
-    const SAVED = path.join(PUGI_DIR, 'status-previous.json')
-    const mine = { type: 'command', command: 'echo mine', padding: 1, refreshInterval: 5 }
-    fs.writeFileSync(SETTINGS, JSON.stringify({ hooks: {}, statusLine: mine }))
-    install('--status')
-    assert.match(read().statusLine.command, /pugi-status\.cjs/)
-    assert.equal(read().statusLine.refreshInterval, 5)
-    assert.equal(read().statusLine.padding, 1)
-    assert.deepEqual(JSON.parse(fs.readFileSync(SAVED, 'utf8')), mine)
-    assert.equal(count(/pugi-recap/), 2)
-    install()
-    assert.match(read().statusLine.command, /pugi-status\.cjs/)
-    assert.equal(count(/pugi-recap/), 2)
-    install('--no-status')
-    assert.deepEqual(read().statusLine, mine)
-    assert.ok(!fs.existsSync(SAVED))
-    assert.equal(count(/pugi-recap/), 0)
-    fs.writeFileSync(SETTINGS, JSON.stringify({ hooks: {} }))
-    install('--status')
-    assert.ok(!fs.existsSync(SAVED))
-    install('--uninstall')
-    assert.equal(read().statusLine, undefined)
   })
 })

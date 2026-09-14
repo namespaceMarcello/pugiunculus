@@ -1,20 +1,27 @@
 #!/usr/bin/env node
 /**
- * pugi-effort — suggests an effort level for the turn, from the prompt alone.
+ * pugi-effort — suggests an effort for the turn, from the prompt alone.
  *
  * UserPromptSubmit hook. Reads the prompt, scores it with word lists (no
- * model, no network), and adds one line of context: "Effort suggested for this
- * turn: xhigh". The agent then activates the matching skill (effort-low,
- * effort-medium, effort-xhigh, effort-max) as its first move; a skill's effort
- * applies for the rest of the turn and beats the session level. For `high`,
- * the session's own level, nothing is suggested. Continuations ("ok", "go")
- * keep the previous turn's level.
+ * model, no network), and adds one line of context next to it: "Effort
+ * suggested for this turn: 3/10 (mechanical, short)." Nothing else: no
+ * instruction on how to think, no skill to invoke, no parameter set. The
+ * model reads the number and does what it does with it; whether that moves
+ * its thinking is what `bench/effort-score.cjs --text` measures.
+ *
+ * The score is a small integer from the signals that fired (design words
+ * raise, mechanical verbs lower, a request for speed lowers, two question
+ * marks raise…); the line carries it on a 1-to-10 scale, and the log keeps
+ * both the scale and the nearest of Claude Code's five levels, which the
+ * status line and the bench use. Continuations ("ok", "go") keep the previous
+ * turn's suggestion.
  *
  * The words live in effort-words.json next to this file (English). A file at
  * ~/.claude/pugi/effort-words.json, or the one PUGI_EFFORT_WORDS points to,
  * adds its words to those: `node install.cjs --effort --lang it` writes the
- * Italian pack there. `bench/effort-score.cjs` replays your own prompts and
- * says whether the lists separate easy turns from hard ones.
+ * Italian pack there, and `--effort` alone learns your own words from your
+ * history. `bench/effort-score.cjs` replays your own prompts and says whether
+ * the lists separate easy turns from hard ones.
  *
  * It never rewrites the prompt: it adds a line next to it. Every decision goes
  * to ~/.claude/pugi/log.jsonl. PUGI_OFF=1, PUGI_EFFORT_OFF=1 or the file
@@ -54,6 +61,12 @@ function loadWords(user) {
   return base
 }
 
+/** The raw score on a 1-to-10 scale: 0 is 5, each point moves one step, the ends are clamped. */
+const gradeOf = (s) => Math.max(1, Math.min(10, s + 5))
+/** The nearest of Claude Code's five levels, for the log, the status line and the bench. */
+const levelOf = (s) => (s <= -2 ? 'low' : s <= 0 ? 'medium' : s === 1 ? 'high' : s === 2 ? 'xhigh' : 'max')
+const GRADE_OF_LEVEL = { low: 2, medium: 4, high: 6, xhigh: 7, max: 9 }
+
 /** A scorer built from a word file. `build()` with no argument uses the user's file, or the defaults. */
 function build(userFile = USER_WORDS) {
   const words = loadWords(userFile)
@@ -63,13 +76,20 @@ function build(userFile = USER_WORDS) {
   const fast = re(words.fast.words)
   const cont = new RegExp('^\\s*(' + words.continue.join('|') + ')\\b', 'i')
 
-  /** The level for a prompt: hard signals raise, mechanical verbs and a request for speed lower, a bare "go" keeps the previous turn's level. */
+  /**
+   * The suggestion for a prompt: hard signals raise, mechanical verbs and a request for speed lower, a bare
+   * "go" keeps the previous turn's. `prev` is the previous result, or just its level. Each signal counts once:
+   * counting occurrences was tried and separated hard turns from easy ones worse (57% against 75%).
+   */
   function score(text, prev) {
     // Accents stripped first: JavaScript's \b does not know "é", so "perché" would never match at a word boundary.
     const t = String(text || '')
       .normalize('NFD')
       .replace(COMBINING, '')
-    if (t.trim().length < 40 && cont.test(t)) return { level: prev || 'high', score: null, signals: ['continuation'] }
+    if (t.trim().length < 40 && cont.test(t)) {
+      const p = typeof prev === 'string' ? { level: prev, grade: GRADE_OF_LEVEL[prev] } : prev
+      return { level: (p && p.level) || 'high', grade: (p && p.grade) || GRADE_OF_LEVEL.high, score: null, signals: ['continuation'] }
+    }
     let s = 0
     const signals = []
     for (const [name, weight, r] of hard)
@@ -97,8 +117,7 @@ function build(userFile = USER_WORDS) {
       s -= 1
       signals.push('short')
     }
-    const level = s <= -2 ? 'low' : s <= 0 ? 'medium' : s === 1 ? 'high' : s === 2 ? 'xhigh' : 'max'
-    return { level, score: s, signals }
+    return { level: levelOf(s), grade: gradeOf(s), score: s, signals }
   }
   return { score, words }
 }
@@ -153,26 +172,27 @@ if (require.main === module) {
     try {
       state = JSON.parse(fs.readFileSync(stateFile, 'utf8'))
     } catch {}
-    const r = score(prompt, state.effort)
+    const r = score(prompt, state.effort ? { level: state.effort, grade: state.grade } : null)
     state.effort = r.level
+    state.grade = r.grade
     try {
       fs.mkdirSync(STATE, { recursive: true })
       fs.writeFileSync(stateFile, JSON.stringify(state))
     } catch {}
 
+    const row = { level: r.level, grade: r.grade, score: r.score, signals: r.signals }
     if (process.env.PUGI_OFF === '1' || process.env.PUGI_EFFORT_OFF === '1' || fs.existsSync(OFF_SWITCH)) {
-      note({ ...base, decision: 'off', level: r.level, score: r.score, signals: r.signals })
+      note({ ...base, decision: 'off', ...row })
       return null
     }
-    note({ ...base, decision: r.level === 'high' ? 'none' : 'suggest', level: r.level, score: r.score, signals: r.signals })
-    if (r.level === 'high') return null
+    note({ ...base, decision: 'suggest', ...row })
     const because = r.signals.length ? r.signals.join(', ') : 'no strong signal'
     return {
       // The line the agent reads; and, when the terminal shows it, one for you.
-      systemMessage: `pugi: effort → ${r.level} (${because})`,
+      systemMessage: `pugi: effort → ${r.grade}/10 (${because})`,
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
-        additionalContext: `Effort suggested for this turn: ${r.level} (${because}). ` + `First move: invoke the skill effort-${r.level}, unless your own reading of the request says otherwise.`,
+        additionalContext: `Effort suggested for this turn: ${r.grade}/10 (${because}).`,
       },
     }
   }

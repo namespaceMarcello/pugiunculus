@@ -3,19 +3,18 @@
  * pugi install / uninstall.
  *
  *   node install.cjs                add the three blockers to ~/.claude/settings.json
- *   node install.cjs --notebook     add the session notebook too; later runs keep it
- *   node install.cjs --no-notebook  take the notebook out, keep the blockers
- *   node install.cjs --effort       add the effort router: a prompt hook and four skills; later runs keep it
+ *   node install.cjs --effort       add the effort router: one hook that writes an effort suggestion next to each prompt; later runs keep it
  *   node install.cjs --effort --lang it   the same, plus the Italian word pack (hooks/effort-words.it.json) into ~/.claude/pugi
  *   node install.cjs --no-effort    take the effort router out, word pack included
  *   node install.cjs --lettore      add the lean reader agent and keep the subagent cache warm for an hour
  *   node install.cjs --no-lettore   take the reader agent and that setting out
- *   node install.cjs --status       show what the hooks did in the status line; the status line you had keeps running above it
- *   node install.cjs --no-status    your status line back as it was
  *   node install.cjs --uninstall    take everything out again
  *
  * Your settings file is backed up next to itself before anything is written.
  * The install is idempotent: running it twice changes nothing the second time.
+ * What an earlier version installed and this one no longer has — the session
+ * notebook, the status line with its recap, the four effort skills — is taken
+ * out on any run, and a status line of yours that ours had replaced is put back.
  */
 
 const fs = require('node:fs')
@@ -25,16 +24,12 @@ const os = require('node:os')
 const SETTINGS = path.join(os.homedir(), '.claude', 'settings.json')
 const HOOKS = path.join(__dirname, 'hooks').replace(/\\/g, '/')
 const UNINSTALL = process.argv.includes('--uninstall')
-const NOTEBOOK_ON = process.argv.includes('--notebook')
-const NOTEBOOK_OFF = process.argv.includes('--no-notebook')
 const EFFORT_ON = process.argv.includes('--effort')
 const EFFORT_OFF = process.argv.includes('--no-effort')
 const LANG = process.argv.includes('--lang') ? String(process.argv[process.argv.indexOf('--lang') + 1] || '').toLowerCase() : null
 const NO_LEARN = process.argv.includes('--no-learn')
 const LETTORE_ON = process.argv.includes('--lettore')
 const LETTORE_OFF = process.argv.includes('--no-lettore')
-const STATUS_ON = process.argv.includes('--status')
-const STATUS_OFF = process.argv.includes('--no-status')
 
 const ENTRIES = [
   {
@@ -57,59 +52,25 @@ const ENTRIES = [
   },
 ]
 
-// One script on seven entries: it records on some events and puts the
-// notebook back on the others. See hooks/pugi-notebook.cjs.
-const NOTEBOOK = [
-  { event: 'UserPromptSubmit' },
-  { event: 'PostToolUse', matcher: 'Edit|Write|MultiEdit|NotebookEdit' },
-  { event: 'PostToolUse', matcher: 'Bash', if: 'Bash(git commit *)' },
-  { event: 'PostToolUse', matcher: 'PowerShell', if: 'PowerShell(git commit *)' },
-  { event: 'Stop' },
-  { event: 'SessionStart', matcher: 'compact|clear|resume' },
-  { event: 'SessionEnd', matcher: 'clear' },
-].map((e) => ({ ...e, file: 'pugi-notebook.cjs' }))
-
-// The effort router: one hook on the prompt, and four skills the agent invokes
-// to set the turn's effort. The skills live in ~/.claude/skills, marked as ours
-// so a later --no-effort or --uninstall removes them and nothing else.
-// See hooks/pugi-effort.cjs.
+// The effort router: one hook on the prompt, which writes a suggestion next to
+// it and nothing else. See hooks/pugi-effort.cjs. Until 2026-09-14 it also
+// wrote four skills (effort-low/medium/xhigh/max) into ~/.claude/skills for the
+// agent to invoke; those are gone, and any left from that version are removed.
 const EFFORT = [{ event: 'UserPromptSubmit', file: 'pugi-effort.cjs' }]
 const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills')
 const SKILL_MARK = '<!-- written by pugi install.cjs; node install.cjs --no-effort removes it -->'
-const SKILLS = {
-  low: 'Do the work directly, no extra deliberation: this is mechanical.',
-  medium: 'Answer or act directly; think only where the request leaves a real choice.',
-  xhigh: 'Think it through before acting: check the facts that decide it, and the strongest alternative.',
-  max: 'Think it through fully before acting. First restate the real question, then find the facts that decide it in files or logs before opinions, then weigh the strongest alternative and say why it does not hold. Then answer short: the conclusion, the reasons that decide it, what stays uncertain.',
-}
+const OLD_SKILLS = ['low', 'medium', 'xhigh', 'max']
 // The word pack of a language: hooks/effort-words.<lang>.json, copied to where the hook looks, marked as ours.
 const WORDS_FILE = path.join(os.homedir(), '.claude', 'pugi', 'effort-words.json')
 const WORDS_MARK = 'written by pugi install.cjs; node install.cjs --no-effort removes it'
 const packFile = (lang) => path.join(__dirname, 'hooks', 'effort-words.' + lang + '.json')
 const skillFile = (level) => path.join(SKILLS_DIR, 'effort-' + level, 'SKILL.md')
-const skillText = (level) =>
-  `---
-name: effort-${level}
-description: Sets this turn's effort to ${level}. Invoke as the first move when the context line next to the prompt says "Effort suggested for this turn: ${level}". Not for anything else.
-effort: ${level}
-user-invocable: false
----
-${SKILL_MARK}
 
-This turn runs at effort ${level}. ${SKILLS[level]}
-`
-
-// Matches both the old squint*.cjs paths and the current pugi*.cjs ones, so a
-// first run after the rename cleans up the old entries and every run after
-// that stays idempotent.
+// Matches the old squint*.cjs paths, the current pugi*.cjs ones, and the hooks
+// earlier versions installed (notebook, recap), so a first run after an update
+// cleans up the old entries and every run after that stays idempotent.
 const commandMatches = (entry, re) => (entry.hooks || []).some((h) => re.test(String(h.command || '')))
 const isOurs = (entry) => commandMatches(entry, /(?:squint|pugi)(?:-agents|-bash|-notebook|-effort|-recap)?\.cjs/)
-// With the status line comes a recap for the user: a sentence after each answer and one at session start.
-const RECAP = [
-  { event: 'Stop', file: 'pugi-recap.cjs' },
-  { event: 'SessionStart', matcher: 'startup|resume', file: 'pugi-recap.cjs' },
-]
-const isNotebook = (entry) => commandMatches(entry, /pugi-notebook\.cjs/)
 const isEffort = (entry) => commandMatches(entry, /pugi-effort\.cjs/)
 
 // The lean reader: a subagent with three tools and ten lines of instructions,
@@ -166,21 +127,11 @@ if (fs.existsSync(OLD_DIR) && !fs.existsSync(DIR)) {
 settings.hooks = settings.hooks || {}
 const lists = () => Object.entries(settings.hooks).filter(([, list]) => Array.isArray(list))
 
-// The notebook is opt-in; once chosen it survives a plain re-install.
-const hadNotebook = lists().some(([, list]) => list.some(isNotebook))
-const notebook = !UNINSTALL && !NOTEBOOK_OFF && (NOTEBOOK_ON || hadNotebook)
+// The router is opt-in; once chosen it survives a plain re-install.
 const hadEffort = lists().some(([, list]) => list.some(isEffort))
 const effort = !UNINSTALL && !EFFORT_OFF && (EFFORT_ON || hadEffort)
 const hadLettore = agentIsOurs()
 const lettore = !UNINSTALL && !LETTORE_OFF && (LETTORE_ON || hadLettore)
-
-// The status line: ours goes into settings.statusLine, and the one that was there is kept in
-// ~/.claude/pugi/status-previous.json, where hooks/pugi-status.cjs runs it first on every refresh.
-const STATUS_FILE = path.join(DIR, 'status-previous.json')
-const STATUS_COMMAND = 'node "' + HOOKS + '/pugi-status.cjs"'
-const statusIsOurs = (s) => !!s && typeof s.command === 'string' && /pugi-status\.cjs/.test(s.command)
-const hadStatus = statusIsOurs(settings.statusLine)
-const status = !UNINSTALL && !STATUS_OFF && (STATUS_ON || hadStatus)
 
 let removed = 0
 for (const [event, list] of lists()) {
@@ -192,27 +143,17 @@ for (const [event, list] of lists()) {
 }
 
 if (!UNINSTALL) {
-  for (const e of [...ENTRIES, ...(notebook ? NOTEBOOK : []), ...(effort ? EFFORT : []), ...(status ? RECAP : [])]) {
+  for (const e of [...ENTRIES, ...(effort ? EFFORT : [])]) {
     const hook = { type: 'command', command: 'node "' + HOOKS + '/' + e.file + '"', timeout: 5 }
-    if (e.if) hook.if = e.if
     ;(settings.hooks[e.event] = settings.hooks[e.event] || []).push(e.matcher ? { matcher: e.matcher, hooks: [hook] } : { hooks: [hook] })
   }
 }
 
-// The status line: on the way in, whatever is there is saved and ours takes its place; on the way out, what was saved comes back.
-let statusWritten = false
+// The status line an earlier version installed: the one it had replaced was kept in ~/.claude/pugi/status-previous.json
+// and comes back; without one, the setting is dropped.
+const STATUS_FILE = path.join(DIR, 'status-previous.json')
 let statusRestored = false
-if (status && !hadStatus) {
-  if (settings.statusLine) {
-    fs.mkdirSync(DIR, { recursive: true })
-    fs.writeFileSync(STATUS_FILE, JSON.stringify(settings.statusLine, null, 2) + '\n')
-  }
-  // The previous line's refresh timer and padding still apply: it runs inside ours.
-  const keep = {}
-  for (const key of ['refreshInterval', 'padding']) if (settings.statusLine && settings.statusLine[key] !== undefined) keep[key] = settings.statusLine[key]
-  settings.statusLine = { type: 'command', command: STATUS_COMMAND, ...keep }
-  statusWritten = true
-} else if (!status && hadStatus) {
+if (settings.statusLine && typeof settings.statusLine.command === 'string' && /pugi-status\.cjs/.test(settings.statusLine.command)) {
   let saved = null
   try {
     saved = JSON.parse(fs.readFileSync(STATUS_FILE, 'utf8'))
@@ -232,22 +173,15 @@ fs.mkdirSync(path.dirname(SETTINGS), { recursive: true })
 fs.writeFileSync(SETTINGS, JSON.stringify(settings, null, 2) + '\n')
 JSON.parse(fs.readFileSync(SETTINGS, 'utf8')) // prove it is still valid JSON
 
-// The four effort skills follow the hook: written with it, removed with it. Only files carrying our mark are touched.
-let skillsWritten = 0
+// The effort skills of the earlier router are removed on every run. Only files carrying our mark are touched.
 let skillsRemoved = 0
-for (const level of Object.keys(SKILLS)) {
+for (const level of OLD_SKILLS) {
   const file = skillFile(level)
   let current = null
   try {
     current = fs.readFileSync(file, 'utf8')
   } catch {}
-  if (effort) {
-    if (current === skillText(level)) continue
-    if (current !== null && !current.includes(SKILL_MARK)) continue // someone else's skill: leave it
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, skillText(level))
-    skillsWritten++
-  } else if (current !== null && current.includes(SKILL_MARK)) {
+  if (current !== null && current.includes(SKILL_MARK)) {
     fs.rmSync(path.dirname(file), { recursive: true, force: true })
     skillsRemoved++
   }
@@ -292,7 +226,7 @@ let learned = null
   if (learnLib) learned = learnLib.learnAndJudge({ days: 30, file: WORDS_FILE, mark: WORDS_MARK, write: true })
 }
 
-// The reader agent follows the same rule as the skills: only a file carrying our mark is written over or removed.
+// The reader agent follows the same rule as the word pack: only a file carrying our mark is written over or removed.
 let agentWritten = false
 let agentRemoved = false
 {
@@ -320,8 +254,7 @@ if (UNINSTALL) {
   console.log(removed ? 'removed     ' + removed + ' pugi hook(s)' : 'nothing to remove — pugi was not installed')
 } else {
   for (const e of ENTRIES) console.log('installed   ' + e.matcher.padEnd(17) + e.what)
-  if (notebook) console.log('installed   ' + 'session notebook'.padEnd(17) + 'your requests, the files changed and what was done, back after every cut')
-  if (effort) console.log('installed   ' + 'effort router'.padEnd(17) + 'suggests a level per prompt; four skills effort-low/medium/xhigh/max' + (skillsWritten ? ' (' + skillsWritten + ' written)' : ''))
+  if (effort) console.log('installed   ' + 'effort router'.padEnd(17) + 'writes an effort suggestion, 1 to 10, next to each prompt')
   if (packWritten) console.log('installed   ' + 'word pack'.padEnd(17) + packWritten + ' words added to the English defaults, in ' + WORDS_FILE)
   if (learned) {
     const pct = (x) => (x === null || x === undefined ? 'n/a' : Math.round(100 * x) + '%')
@@ -329,22 +262,19 @@ if (UNINSTALL) {
       'learned     ' + 'your words'.padEnd(17) + learned.verdict + (learned.defaults !== undefined ? ` (ranks hard above easy: defaults ${pct(learned.defaults)}, learned ${pct(learned.learned)}, on ${learned.prompts} prompts)` : ` (${learned.prompts} prompts)`)
     )
   }
-  if (skillsRemoved) console.log('removed     ' + skillsRemoved + ' effort skill(s)')
+  if (skillsRemoved) console.log('removed     ' + skillsRemoved + ' effort skill(s) of the earlier router')
   if (packRemoved) console.log('removed     the word pack')
   if (lettore) console.log('installed   ' + 'lettore agent'.padEnd(17) + 'a lean reader for large reads; subagent cache kept warm for an hour' + (agentWritten ? ' (written)' : ''))
   if (agentRemoved) console.log('removed     the lettore agent and its cache setting')
-  if (status) console.log('installed   ' + 'status line'.padEnd(17) + 'what the hooks did this session, under the status line you had' + (statusWritten ? ' (written)' : '') + '; a recap after each answer and at session start')
-  if (statusRestored) console.log('restored    your status line')
+  if (statusRestored) console.log('restored    your status line (the earlier version had replaced it)')
   console.log('')
-  console.log(effort || lettore ? 'The hooks take effect immediately; the effort skills and the lettore agent from your next session.' : 'They take effect immediately; no restart needed.')
+  console.log(lettore ? 'The hooks take effect immediately; the lettore agent from your next session.' : 'They take effect immediately; no restart needed.')
   console.log('')
   console.log('  see your own numbers   node measure.cjs')
   console.log('  tune the read block    PUGI_THRESHOLD_BYTES=16000     (default 8000)')
   console.log('  tune the fan-out block PUGI_FANOUT_MIN=6              (default 4)')
-  console.log(notebook ? '  drop the notebook      node install.cjs --no-notebook' : '  add the notebook       node install.cjs --notebook    (off by default)')
   console.log(effort ? '  drop the effort router node install.cjs --no-effort' : '  add the effort router  node install.cjs --effort      (off by default)')
   console.log(lettore ? '  drop the reader agent  node install.cjs --no-lettore' : '  add the reader agent   node install.cjs --lettore     (off by default)')
-  console.log(status ? '  drop the status line   node install.cjs --no-status' : '  add the status line    node install.cjs --status      (off by default)')
   console.log('  disable all, keep log  touch ~/.claude/pugi/OFF')
   console.log('  remove                 node install.cjs --uninstall')
   console.log('  decisions              ~/.claude/pugi/log.jsonl')

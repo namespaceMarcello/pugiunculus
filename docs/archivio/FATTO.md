@@ -116,3 +116,54 @@ days: median 24k); `--writes` counts Write calls over files already read or
 edited in the session (36 in 14 days, 111k tokens: no blocker). One test added
 (44 green). Try it: `node install.cjs --lettore`, `node measure-context.cjs
 --agents`, `node measure-context.cjs --writes`.
+
+### 2026-09-14 — the router says, and sets nothing
+
+Tested live that `effortLevel` in `settings.json` is not re-read during a
+session (a hook cannot set effort by writing settings). `--savings` put the
+router's ceiling at −1.4% even if every suggestion landed, and `--applied` had
+them landing 8 times in 28: the four effort skills are gone. `hooks/pugi-effort.cjs`
+now writes one line next to the prompt — `Effort suggested for this turn: 3/10
+(mechanical, short).` — with the raw score on a 1-to-10 scale (thinking follows
+the raw score step by step; the five levels hid that), no instruction, no
+skill. Counting a signal's occurrences was tried and separated worse (57%
+against 75%). `install.cjs --effort` writes only the hook and removes the
+skills an earlier version wrote; `--applied` is gone from the bench, and
+`--text` compares turns with the line against turns without, same class, same
+session level; the collector keeps each turn's model. The proxy on
+`ANTHROPIC_BASE_URL` is closed on the same number. 55 tests green. Try it:
+`node install.cjs --effort`, then type anything and read the line;
+`node bench/effort-score.cjs --text`.
+
+### 2026-09-14 — the notebook and the status line go
+
+Under the rule of the day — what moves no measured number does not stay — the
+session notebook (`hooks/pugi-notebook.cjs`, `bench/notebook.cjs`, its
+questions and its 33 result rows) and the status line with its recap
+(`hooks/pugi-status.cjs`, `hooks/pugi-recap.cjs`) are removed, with their
+tests and installer flags. The installer still cleans what those versions
+wrote: their hook entries, the four effort skills, and a status line of the
+user's that ours had replaced (restored from `status-previous.json`, then the
+file removed). The README keeps the notebook table under "Tried, measured,
+taken out"; the rows are in the git history. 38 tests green. Try it: `node
+install.cjs` on a machine with the old install prints "restored your status
+line"; `~/.claude/settings.json` has no `pugi-status` after it.
+
+Same day, a defect in what the measurements count: `measure-context.cjs`
+skipped the benchmark's own sessions only under the new name (`pugi-bench-*`);
+the 98 sessions the fan-out and chain benchmarks ran before the rename
+(`squint-bench*`) were counted as the user's work. Fixed; the router's savings
+ceiling moves from −1.4% to −1.1%, the separation stays at 75%.
+
+### 2026-09-14 — two candidates measured, none built
+
+`measure-context.cjs --rereads` counts a Read whose path, offset and limit
+match an earlier one in the session, with no edit of that file and no
+compaction in between: 11 calls, 13k tokens, 3% of Read tokens, 2 sessions of
+38 in 14 days. `--shell` lists shell results of 2k tokens or more by command
+family, with whether a filter was already on the pipe: 100 results, 324k
+tokens, 15% of all tool results, 137k already filtered; the biggest of the rest
+were pre-blocker `cat`s, repeats let through on purpose, and byte-heavy `sed`
+ranges under 500 lines. Neither becomes a hook; both are in `docs/STATO.md`
+§Decisions and in the README under "Where it does not help". Try it:
+`node measure-context.cjs --rereads`, `node measure-context.cjs --shell`.

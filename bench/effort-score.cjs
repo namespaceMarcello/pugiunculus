@@ -11,6 +11,7 @@
  *   node bench/effort-score.cjs --learn      learn word lists from your history and judge them on held-out sessions
  *   node bench/effort-score.cjs --learn --write   the same, and write them to ~/.claude/pugi/effort-words.json when they win
  *   node bench/effort-score.cjs --check      harder: five folds by session, a split by time, and a learning curve
+ *   node bench/effort-score.cjs --text       did the line next to the prompt move thinking? turns with it against turns without, same class, same session level
  *
  * Every typed prompt of every interactive session is scored with
  * hooks/pugi-effort.cjs, exactly as the hook would (the words in
@@ -42,13 +43,12 @@ const SAVINGS = args.includes('--savings')
 const LEARN = args.includes('--learn')
 const WRITE = args.includes('--write')
 const CHECK = args.includes('--check')
-const APPLIED = args.includes('--applied')
+const TEXT = args.includes('--text')
 const days = args.includes('--days') ? Number(args[args.indexOf('--days') + 1]) : DAYS
 const MARK = 'written by pugi install.cjs; node install.cjs --no-effort removes it'
 
-// --applied: did the level the router suggested become the level the turn ran at? The pugi log has the suggestion
-// (session, time, level); the transcript has the per-turn effort the API was asked for.
-if (APPLIED) {
+/** The router's suggestions from the pugi log: session, time, grade. */
+function suggestions() {
   const fs = require('node:fs')
   const os = require('node:os')
   const rows = []
@@ -57,31 +57,57 @@ if (APPLIED) {
       if (!l.includes('"hook":"effort"')) continue
       try {
         const r = JSON.parse(l)
-        if (r.hook === 'effort' && r.decision === 'suggest') rows.push({ session: r.session, at: Date.parse(r.ts), level: r.level })
+        if (r.hook === 'effort' && r.decision === 'suggest') rows.push({ session: r.session, at: Date.parse(r.ts), level: r.level, grade: r.grade })
       } catch {}
     }
   } catch {}
+  return rows
+}
+const suggestedFor = (rows, t) => (t.sid && t.when ? rows.find((r) => r.session === t.sid && Math.abs(r.at - t.when) < 15000) : undefined)
+
+// --text: the router writes one line next to the prompt and sets nothing. Did the line move thinking? Turns are
+// grouped by the level the session was at and the level the scorer gives the prompt (so easy prompts are compared
+// with easy prompts), and split by whether the line was there: the pugi log has every suggestion, with session
+// and time. Prompts the scorer leaves at the session's own level are skipped, since the line asks for nothing.
+if (TEXT) {
+  const rows = suggestions()
   const { turns } = lib.collect(days)
-  const by = {}
-  let suggested = 0
-  let applied = 0
-  let unknown = 0
-  for (const t of turns) {
-    if (!t.sid || !t.when) continue
-    const s = rows.find((r) => r.session === t.sid && Math.abs(r.at - t.when) < 15000)
-    if (!s) continue
-    suggested++
-    const b = (by[s.level] = by[s.level] || { n: 0, applied: 0 })
-    b.n++
-    if (!t.perTurn) unknown++
-    else if (t.perTurn === s.level) {
-      applied++
-      b.applied++
-    }
+  lib.scoreAll(score, turns)
+  const median = (xs) => {
+    if (!xs.length) return 0
+    const s = [...xs].sort((a, b) => a - b)
+    return s[Math.floor(s.length / 2)]
   }
-  console.log(`Last ${days} days: ${suggested} turns where the router suggested a level` + (suggested ? `; ${applied} ran at it (${Math.round((100 * applied) / suggested)}%)` : '') + (unknown ? `; ${unknown} with no per-turn effort recorded` : '') + '.')
-  for (const level of LEVELS) if (by[level]) console.log(`  ${level.padEnd(7)} suggested ${String(by[level].n).padStart(4)}   applied ${String(by[level].applied).padStart(4)}`)
-  console.log('A suggestion the agent did not act on, and one it acted on that the harness ignored, look the same here: the transcript records the outcome, not the attempt.')
+  const k = (x) => (Math.abs(x) >= 1000 ? (x / 1000).toFixed(1) + 'k' : String(Math.round(x)))
+  const cells = {}
+  let withLine = 0
+  for (const t of turns) {
+    if (!t.effort || !t.requests) continue
+    if (t.level === t.effort) continue
+    const s = suggestedFor(rows, t)
+    const what = s ? 'line' : 'none'
+    if (s) withLine++
+    const key = t.effort + '|' + t.level
+    const c = (cells[key] = cells[key] || { none: [], line: [] })
+    c[what].push({ thinking: t.thinking, per: t.thinking / t.requests, model: t.model })
+  }
+  console.log(`Last ${days} days: ${turns.length} typed turns, ${withLine} with the router's line next to the prompt.`)
+  console.log('Thinking per turn and per request, median, for prompts the scorer puts away from the session level:\n')
+  console.log('session'.padEnd(9) + 'scored'.padEnd(8) + 'the line'.padEnd(12) + 'turns'.padStart(6) + 'thinking/turn'.padStart(15) + 'thinking/req'.padStart(14) + '   models')
+  const order = (l) => LEVELS.indexOf(l)
+  for (const key of Object.keys(cells).sort((a, b) => order(a.split('|')[0]) - order(b.split('|')[0]) || order(a.split('|')[1]) - order(b.split('|')[1]))) {
+    const [sess, lvl] = key.split('|')
+    const c = cells[key]
+    if (!c.line.length) continue
+    for (const what of ['none', 'line']) {
+      const xs = c[what]
+      if (!xs.length) continue
+      const models = [...new Set(xs.map((x) => x.model))].join(',')
+      console.log(sess.padEnd(9) + lvl.padEnd(8) + (what === 'line' ? 'there' : 'absent').padEnd(12) + String(xs.length).padStart(6) + k(median(xs.map((x) => x.thinking))).padStart(15) + k(median(xs.map((x) => x.per))).padStart(14) + '   ' + models)
+    }
+    console.log('')
+  }
+  console.log(`Fewer than ten turns in a row is an anecdote. The line was on from 2026-09-13 on the author's machine; "absent" is everything before, and sessions with the hook off.`)
   process.exit(0)
 }
 
