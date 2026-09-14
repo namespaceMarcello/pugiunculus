@@ -137,7 +137,7 @@ const modelName = (id) => {
   const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?/.exec(id || '')
   return m ? m[1][0].toUpperCase() + m[1].slice(1) + ' ' + m[2] + (m[3] ? '.' + m[3] : '') : id || 'unknown model'
 }
-const NO_COLOR = process.env.NO_COLOR !== undefined || process.env.PUGI_COLOR === '0'
+const NO_COLOR = Boolean(process.env.NO_COLOR) || process.env.PUGI_COLOR === '0' // NO_COLOR counts when set and not empty, as the convention says
 const paint = (code, s) => (NO_COLOR ? s : `\x1b[${code}m${s}\x1b[0m`)
 const red = (s) => paint(31, s)
 const green = (s) => paint(32, s)

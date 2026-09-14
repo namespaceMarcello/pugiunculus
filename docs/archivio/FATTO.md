@@ -250,3 +250,10 @@ passes, and the log says which model was chosen or that none was. A custom
 agent whose definition names its model passes. `bench/agent-model.cjs`
 matches every subagent to its launching call and prices the ones without a
 model against Sonnet. Four tests. Try it: launch an Agent without `model`.
+
+### 2026-09-14 — NO_COLOR by the convention
+
+`pugi-cold.cjs` turns colours off when `NO_COLOR` is set and not empty, as
+the convention says, not whenever the variable exists: a Haiku subagent
+running `node test.cjs` had it set empty and saw the colour test fail.
+Try it: `NO_COLOR=1 node test.cjs` and `node test.cjs`, 47 each.

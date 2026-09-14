@@ -508,7 +508,7 @@ describe('pugi-cold.cjs — the cold cache', () => {
     assert.match(fable, /Model in use: Fable 5\.1 \(claude-fable-5-1\)/)
     assert.match(fable, /│ continue\s+│ 265,000 cache write \(\$5\.30\)\s+│ 265,000 cache read \(\$0\.066\)\s+│/)
     // Colours are on unless NO_COLOR or PUGI_COLOR=0.
-    assert.match(why(ask(fresh(), file, 'commit', { PUGI_COLOR: '1' })), /\x1b\[31m/)
+    assert.match(why(ask(fresh(), file, 'commit', { PUGI_COLOR: '1', NO_COLOR: '' })), /\x1b\[31m/)
   })
 
   test('within the TTL nothing happens; the TTL follows the settings and PUGI_COLD_MINUTES', () => {
