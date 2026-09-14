@@ -456,6 +456,115 @@ describe('bench/effort-learn.cjs — learning the words', () => {
   })
 })
 
+// ------------------------------------------------------------ pugi-cold.cjs
+
+describe('pugi-cold.cjs — the cold cache', () => {
+  const CO = 'pugi-cold.cjs'
+  const HOUR = 3600e3
+  let t = 0
+  /** A transcript whose last request ended `ago` ms ago with `ctx` tokens of context; `after` lines follow it. */
+  const transcript = (ago, ctx, model, after = []) => {
+    const file = path.join(SANDBOX, 'transcript-' + ++t + '.jsonl')
+    const at = new Date(Date.now() - ago).toISOString()
+    const lines = [
+      { type: 'user', message: { role: 'user', content: 'hello' } },
+      // The first request carries the fixed part alone: 55k.
+      { type: 'assistant', timestamp: new Date(Date.now() - ago - 60e3).toISOString(), message: { id: 'msg_0', model, usage: { input_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 54995, output_tokens: 100 } } },
+      { type: 'assistant', timestamp: at, message: { id: 'msg_1', model, usage: { input_tokens: 5, cache_read_input_tokens: ctx - 1005, cache_creation_input_tokens: 1000, output_tokens: 300 } } },
+      ...after,
+    ]
+    fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n')
+    return file
+  }
+  const ask = (session, file, prompt, extra) => call(CO, { session_id: session, hook_event_name: 'UserPromptSubmit', transcript_path: file, prompt }, { PUGI_COLOR: '0', ...extra })
+  const why = (out) => JSON.parse(out).reason
+
+  test('after an hour the prompt is blocked once with the numbers, and the same prompt sent again passes', () => {
+    const s = fresh()
+    const file = transcript(2 * HOUR + 15 * 60e3, 265e3, 'claude-opus-5')
+    const out = ask(s, file, 'commit')
+    assert.equal(JSON.parse(out).decision, 'block')
+    assert.match(why(out), /away 2h 15m; the cache keeps the conversation for an hour\. Your prompt is on hold\./)
+    assert.match(why(out), /What each choice costs, in input tokens:/)
+    // Continuing rewrites 265k at 2×; every later turn re-reads 265k at 0.1×. /compact: the cold read at 1× plus 50k of summary,
+    // then 90k a turn (fixed 55k + 35k put back). /clear: nothing now, the fixed 55k a turn.
+    assert.match(why(out), /┌─+┬─+┬─+┬─+┐\n.*│ if you…\s+│ you pay now\s+│ then, on every request\s+│ and you lose\s+│/)
+    assert.match(why(out), /│ continue\s+│ 530k tokens\s+\(the whole history\)\s+│ 27k tokens\s+│ nothing\s+│/)
+    assert.match(why(out), /│ \/compact first\s+│ 315k tokens \(−41%\)\s+│ 9k tokens\s+\(−66%\)\s+│ detail: a summary replaces the history │/)
+    assert.match(why(out), /│ \/clear\s+│ 0\s+\(−100%\)\s+│ 6k tokens\s+\(−79%\)\s+│ the history\s+│/)
+    assert.match(why(out), /↑ brings your prompt back/)
+    // The blocked prompt went to the prompt history, once; the same prompt sent again passes.
+    const HISTORY = path.join(HOME, '.claude', 'history.jsonl')
+    const history = () => fs.readFileSync(HISTORY, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    assert.deepEqual(history().filter((h) => h.sessionId === s).map((h) => h.display), ['commit'])
+    assert.equal(ask(s, file, 'commit'), '')
+    assert.deepEqual(decisions(s), ['blocked', 'insisted'])
+    assert.equal(history().filter((h) => h.sessionId === s).length, 1)
+    // On Fable 5.1 a warm read is 0.025×: the later turns cost a quarter, the rewrite the same.
+    assert.match(why(ask(fresh(), transcript(2 * HOUR, 265e3, 'claude-fable-5-1'), 'commit')), /│ continue\s+│ 530k tokens\s+\(the whole history\)\s+│ 7k tokens/)
+    // Colours are on unless NO_COLOR or PUGI_COLOR=0.
+    assert.match(why(ask(fresh(), file, 'commit', { PUGI_COLOR: '1' })), /\x1b\[31m/)
+  })
+
+  test('within the TTL nothing happens; the TTL follows the settings and PUGI_COLD_MINUTES', () => {
+    const s = fresh()
+    const file = transcript(10 * 60e3, 200e3, 'claude-opus-5')
+    assert.equal(ask(s, file, 'go on'), '')
+    assert.deepEqual(decisions(s), ['warm'])
+    assert.equal(JSON.parse(ask(fresh(), file, 'go on', { PUGI_COLD_MINUTES: '5' })).decision, 'block')
+    const SETTINGS = path.join(HOME, '.claude', 'settings.json')
+    fs.mkdirSync(path.dirname(SETTINGS), { recursive: true })
+    fs.writeFileSync(SETTINGS, JSON.stringify({ promptCacheTtl: '5m' }))
+    assert.match(why(ask(fresh(), file, 'go on')), /keeps the conversation for 5 minutes/)
+    assert.equal(ask(fresh(), file, 'go on', { CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' }), '')
+    fs.unlinkSync(SETTINGS)
+  })
+
+  test('next to the effort hook on the same prompt, at the same instant, it still remembers it blocked', async () => {
+    const s = fresh()
+    const file = transcript(3 * HOUR, 300e3, 'claude-opus-5')
+    const ev = { session_id: s, hook_event_name: 'UserPromptSubmit', transcript_path: file, prompt: 'go on' }
+    const both = () =>
+      Promise.all(
+        ['pugi-effort.cjs', CO].map(
+          (h) =>
+            new Promise((res) => {
+              const p = spawn(process.execPath, [path.join(HOOKS, h)], { env: env() })
+              let out = ''
+              p.stdout.on('data', (d) => (out += d))
+              p.on('close', () => res(out.trim()))
+              p.stdin.end(JSON.stringify(ev))
+            })
+        )
+      )
+    assert.equal(JSON.parse((await both())[1]).decision, 'block')
+    assert.equal((await both())[1], '')
+    assert.deepEqual(decisions(s).filter((d) => d !== 'suggest'), ['blocked', 'insisted'])
+  })
+
+  test('a compaction after the last request passes: the cache is rebuilt anyway', () => {
+    const s = fresh()
+    const file = transcript(3 * HOUR, 400e3, 'claude-opus-5', [{ type: 'system', subtype: 'compact_boundary', timestamp: new Date().toISOString() }])
+    assert.equal(ask(s, file, 'go on'), '')
+    assert.deepEqual(decisions(s), ['compacted'])
+  })
+
+  test('slash commands, a missing transcript, a fresh session, the OFF switches and a broken event all go through', () => {
+    const s = fresh()
+    const file = transcript(3 * HOUR, 400e3, 'claude-opus-5')
+    assert.equal(ask(s, file, '/compact'), '')
+    assert.equal(ask(s, path.join(SANDBOX, 'no-such.jsonl'), 'go on'), '')
+    const empty = path.join(SANDBOX, 'fresh.jsonl')
+    fs.writeFileSync(empty, JSON.stringify({ type: 'user', message: { role: 'user', content: 'first' } }) + '\n')
+    assert.equal(ask(s, empty, 'go on'), '')
+    assert.equal(ask(s, file, 'go on', { PUGI_OFF: '1' }), '')
+    assert.equal(ask(s, file, 'go on', { PUGI_COLD_OFF: '1' }), '')
+    assert.deepEqual(decisions(s), ['none', 'none', 'off', 'off'])
+    assert.equal(call(CO, { session_id: s, prompt: 'go on' }), '')
+    assert.equal(call(CO, { session_id: s }), '')
+  })
+})
+
 describe('install.cjs', () => {
   const SETTINGS = path.join(HOME, '.claude', 'settings.json')
   const install = (...args) => spawnSync(process.execPath, [path.join(__dirname, 'install.cjs'), ...args], { encoding: 'utf8', env: env() })
@@ -476,6 +585,7 @@ describe('install.cjs', () => {
     fs.writeFileSync(path.join(SKILLS, 'effort-max', 'SKILL.md'), ours)
     install('--effort')
     assert.equal(count(/pugi-effort/), 1)
+    assert.equal(count(/pugi-cold/), 1) // the cold-cache hook comes with the blockers
     assert.ok(!fs.existsSync(path.join(SKILLS, 'effort-max')))
     for (const l of ['medium', 'xhigh']) assert.ok(!fs.existsSync(path.join(SKILLS, 'effort-' + l)))
     assert.equal(fs.readFileSync(path.join(SKILLS, 'effort-low', 'SKILL.md'), 'utf8'), theirs)

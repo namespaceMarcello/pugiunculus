@@ -2,13 +2,14 @@
 
 **Your coding agent opens an 84 KB file to read ten lines. Then carries 12,000 tokens of it for the rest of the session.**
 
-Pugiunculus is three hooks that stop the ways a coding agent burns tokens on nothing:
+Pugiunculus is four hooks that stop the ways a coding agent burns tokens on nothing:
 
 - **opening a whole file** to read ten lines — 11,747 tokens where 614 would do
 - **`cat BIG` instead** — the same waste through the shell, which is where most of it actually happens
 - **spawning ten small subagents** where two would do — each pays a fixed entry cost before doing any work
+- **the first prompt after an hour away** — the cache is cold, and "commit" rewrites 265k tokens at twice the input price
 
-The first two refuse once and explain the cost; if the agent really needs it, it asks again and gets it. The third refuses until the prompts change, because refusing once was measured to change nothing — its section says so, with numbers.
+The first two and the last refuse once and explain the cost; if you or the agent really need it, the same request again goes through. The third refuses until the prompts change, because refusing once was measured to change nothing — its section says so, with numbers.
 
 ```bash
 git clone https://github.com/namespaceMarcello/pugiunculus && node pugiunculus/install.cjs
@@ -113,6 +114,39 @@ Haiku, refused twice, folded the five questions into one or two agents every tim
 Sonnet read the same message and, four times out of five, wrote `[separate context]` into prompts that had no such need — Haiku had just shown these tasks batch fine — and launched its ten agents anyway, paying 10% *more* than the control for the refused waves. The escape hatch was used by the model that read the message, and it was used as a bypass. With the hatch gone, the same Sonnet folded the questions four times out of five and hit the valve once: 12% fewer tokens, 8% less money. So the hatch is off by default and one environment variable away, on the strength of five runs. A model that genuinely needs separate contexts now pays three refused waves for them; that cost is in the table too, in the valve row's minutes.
 
 **What was not measured.** Whether batching *hurts* anywhere: tasks that need separate contexts, or long outputs that fill one agent up. Every batched arm answered 50/50 on this task, which says nothing about those. Opus was not tried as an orchestrator.
+
+---
+
+## The cold cache
+
+Claude Code sends the whole conversation with every request and reads it from a cache: 0.1× the input price (0.025× on Fable 5.1) instead of 1×. The cache lives one TTL after the last request — an hour on a subscription, five minutes on an API key or on usage credits. Come back later and the first prompt, whatever it says, rewrites the whole conversation at the cache-write rate, 2×. A 265k context is 530k there: twenty turns of re-reading it warm, for "commit".
+
+The fourth hook reads the transcript on every prompt. When the last request is older than the TTL it blocks the prompt once and shows a table: what continuing, `/compact` first and `/clear` cost now and on every later turn, in input tokens, and what each one loses — nothing, the detail a summary drops, the whole history. Colours say which way each number goes (`NO_COLOR` or `PUGI_COLOR=0` turns them off). `↑` brings the prompt back; sent again, it goes through. A `/compact` after the last request goes through too: the cache is rebuilt either way. Slash commands are never blocked.
+
+```
+pugi: you were away 2h 15m; the cache keeps the conversation for an hour. Your prompt is on hold.
+What each choice costs, in input tokens:
+
+  ┌────────────────┬────────────────────────────────────┬──────────────────────────┬────────────────────────────────────────┐
+  │ if you…        │ you pay now                        │ then, on every request   │ and you lose                           │
+  ├────────────────┼────────────────────────────────────┼──────────────────────────┼────────────────────────────────────────┤
+  │ continue       │ 530k tokens  (the whole history)   │ 27k tokens               │ nothing                                │
+  │ /compact first │ 315k tokens (−41%)                 │ 9k tokens   (−66%)       │ detail: a summary replaces the history │
+  │ /clear         │ 0           (−100%)                │ 6k tokens   (−79%)       │ the history                            │
+  └────────────────┴────────────────────────────────────┴──────────────────────────┴────────────────────────────────────────┘
+  ↑ brings your prompt back; Enter sends it and continues as it is.
+```
+
+The blocked prompt is written to Claude Code's prompt history as well, so `↑` finds it even when Claude Code dropped it.
+
+On the logs this was built from, 7 days: 15 returns after more than an hour, and the rewrites alone were 13% of everything the week cost. What followed those returns was 60% of the week; replayed with a `/compact` at each return it would have cost 25% less. Over 30 days: 6% and 13%. That is a ceiling — it assumes you compact every time — and the hook's log says how often you did:
+
+```bash
+node bench/cold.cjs             # your own returns after an hour: as it went, with /compact first, with /clear
+node bench/cold.cjs --days 30
+```
+
+It follows `promptCacheTtl` in your settings (5 minutes when set to `5m`), and `PUGI_COLD_MINUTES` overrides it.
 
 ---
 
@@ -281,14 +315,17 @@ Nothing is uploaded. No API calls. It reads `~/.claude/projects` and prints numb
 
 On the 607-session history this was built from: 734 reads would have been blocked, 3.5M tokens at stake, median 2 blocks per session, worst case 15.
 
-Three more readings of the same logs, same rules:
+Four more readings of the same logs, same rules:
 
 ```bash
 node measure-context.cjs          # where a session's cost goes: re-reading the conversation, cache writes, output, your prompts
 node measure-context.cjs --tools  # which tools' results weigh most, and what the big Reads were (slices, insisted, hook off)
 node measure-context.cjs --fixed  # every skill, command, agent and MCP server listed to the model on each move, and which ones you never use
 node measure-context.cjs --split  # what a request carries, by category: the fixed part, your words, tool results, the model's text, calls and thinking
+node measure-context.cjs --compact # what compacting at 150k, 200k, 250k or 400k would have cost or saved, your sessions replayed with the cap
 ```
+
+On a 1M-context model the automatic compaction runs at about 967k, so a session grows all day and every request re-reads all of it. `--compact` replays your sessions with a lower cap and charges each compaction (one read of the context, the summary, what Claude Code puts back). What it cannot price is the detail a summary loses: that is a week with `/autocompact 200k` on. Cache reads are priced per model: 0.1× the input price, 0.025× on Fable 5.1.
 
 **The trade, in one line:** a blocked read is worth ~4,800 tokens. A pointless block costs ~85 (the refusal, then you read it anyway). Pugiunculus pays for itself if it is right **more than 1.9% of the time**.
 
@@ -320,8 +357,9 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 | `PUGI_FANOUT_GAP` | seconds of quiet that end a batch (default `60`) |
 | `PUGI_FANOUT_VALVE` | refused waves in a row before one is let through anyway (default `3`) |
 | `PUGI_FANOUT_ESCAPE=1` | offer `[separate context]` as a way through the fan-out refusal — off by default, Sonnet used it as a bypass 4 times out of 5 |
+| `PUGI_COLD_MINUTES` | minutes of idle after which the cache counts as cold (default `60`, or `5` when `promptCacheTtl` is `5m`) |
 | `PUGI_OFF=1` | disable every block, keep the log — for your own A/B |
-| `PUGI_READ_OFF=1` · `PUGI_BASH_OFF=1` · `PUGI_FANOUT_OFF=1` | disable one hook only, so a control group differs in one thing |
+| `PUGI_READ_OFF=1` · `PUGI_BASH_OFF=1` · `PUGI_FANOUT_OFF=1` · `PUGI_COLD_OFF=1` | disable one hook only, so a control group differs in one thing |
 | `~/.claude/pugi/OFF` | same, as a file — subagents do not inherit your shell, so this is the one that gives you a real control group |
 | `PUGI_LOG=0` | turn the log off entirely |
 
@@ -337,7 +375,7 @@ Why 8 KB: swept 4 / 8 / 16 / 32 / 64 KB over 607 real sessions. 8 KB keeps 91% o
 
 ## What this is not
 
-It is not a framework or a memory system. It is three hooks that stop three specific wastes and one that writes down three kinds of facts and hands them back after a cut — about 830 lines together — plus two measurement tools, so you can check whether any of it moved the number on *your* machine.
+It is not a framework or a memory system. It is four hooks that stop four specific wastes, one that writes an effort number next to each prompt, and a lean reader agent — plus the measurement tools, so you can check whether any of it moved the number on *your* machine.
 
 If the number doesn't move for you, uninstall it. That's what the measurement is for.
 

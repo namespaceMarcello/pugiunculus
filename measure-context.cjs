@@ -8,14 +8,16 @@
  *   node measure-context.cjs --fixed    what is listed to the model on every move and never used: skills, agents, MCP servers
  *   node measure-context.cjs --split    what a request carries, by category: the fixed part, your words, tool results, the model's text, calls and thinking
  *   node measure-context.cjs --agents   what a subagent pays before doing anything, and what they cost together
+ *   node measure-context.cjs --compact  what compacting at 150k, 200k, 250k or 400k would have cost or saved, replayed on your sessions
  *
  * Claude Code sends the whole conversation with every request. This reads your
  * own transcripts and splits what that costs: re-reading the conversation,
  * writing it into the cache, the model's output — and how much of all that is
- * the prompts you typed. Prices are relative (cache read 0.1x input, 5-minute
- * cache write 1.25x, 1-hour write 2x, output 5x). Every current model uses the
- * same ratios, so the shares hold whichever model you run. Interactive sessions
- * only: two typed prompts or more, subagents left out. Nothing leaves your machine.
+ * the prompts you typed. Prices are relative to the model's input price: cache
+ * read 0.1x (0.025x on Fable 5.1), 5-minute cache write 1.25x, 1-hour write 2x,
+ * output 5x. The ratios are the same on every current model but the cache read,
+ * so the shares hold whichever model you run. Interactive sessions only: two
+ * typed prompts or more, subagents left out. Nothing leaves your machine.
  *
  * `bench/effort-score.cjs` requires this file for the transcript parsing;
  * running it directly does the measuring.
@@ -32,6 +34,10 @@ const ROOT = path.join(HOME, '.claude', 'projects')
 const SINCE = Date.now() - DAYS * 864e5
 const CHARS_PER_TOKEN = 3.3
 const W = { input: 1, read: 0.1, write5m: 1.25, write1h: 2, output: 5 }
+/** The cache-read multiplier of a model: 0.025x on Fable 5.1 and Mythos 5.1, 0.1x on every other current model. */
+function readWeight(model) {
+  return /fable-5-1|mythos-5-1/.test(model || '') ? 0.025 : W.read
+}
 const CAPS = [150e3, 250e3, 400e3]
 const NOISE = /^\s*(<command-|<local-command|Caveat:|\[Request interrupted|<system-reminder>|<task-notification|<bash-|This session is being continued)/
 
@@ -138,6 +144,7 @@ function cost() {
       // Streaming writes one line per content block; the last one carries the final usage.
       const w1h = (u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens) || 0
       s.calls.set(id, {
+        model: m.message.model,
         input: u.input_tokens || 0,
         read: u.cache_read_input_tokens || 0,
         write1h: w1h,
@@ -170,7 +177,7 @@ function cost() {
     let w1h = 0
     let w5m = 0
     for (const c of cs) {
-      const r = c.read * W.read
+      const r = c.read * readWeight(c.model)
       const w = c.write5m * W.write5m + c.write1h * W.write1h
       const o = c.output * W.output
       total += c.input * W.input + r + w + o
@@ -181,13 +188,14 @@ function cost() {
       w5m += c.write5m
       const ctx = c.input + c.read + c.write5m + c.write1h
       contexts.push(ctx)
-      CAPS.forEach((cap, i) => (beyond[i] += Math.max(0, ctx - cap) * W.read))
+      CAPS.forEach((cap, i) => (beyond[i] += Math.max(0, ctx - cap) * readWeight(c.model)))
     }
     // A prompt is written into the cache once, then re-read by every later request of its session.
     const writeWeight = w1h >= w5m ? W.write1h : W.write5m
+    const rw = readWeight(cs[cs.length - 1].model)
     for (const p of s.prompts) {
       prompts++
-      promptCost += p.tokens * (writeWeight + W.read * Math.max(0, cs.length - p.at - 1))
+      promptCost += p.tokens * (writeWeight + rw * Math.max(0, cs.length - p.at - 1))
     }
   }
 
@@ -753,12 +761,126 @@ function agents() {
   console.log('The first request is paid once per agent. Its fixed part is cached across agents of the same type for the subagent cache TTL: five minutes by default, an hour with subagentPromptCacheTtl "1h".')
 }
 
-module.exports = { transcripts, typed, messages, chars, CHARS_PER_TOKEN, W, DAYS, ROOT, HOME }
+// ---------------------------------------------------------------------------
+// --compact: what compacting earlier would have cost or saved, replayed on your sessions.
+//
+// Every request of every session is replayed with the context capped. When the
+// next request would pass the cap, a compaction is charged: the summarization
+// request reads the whole context from the cache and writes its summary as
+// output, and the context restarts at the fixed part plus what Claude Code puts
+// back (the summary, up to five files, the skills invoked — PUT_BACK tokens,
+// from the compactions in your own transcripts when there are any). It then
+// grows again by exactly what each request added in reality. What a shorter
+// history costs in lost detail is not in the number: only a week of use says that.
+
+const COMPACT_CAPS = [150e3, 200e3, 250e3, 400e3]
+const SUMMARY_OUTPUT = 10e3 // the summarization request's output, thinking included
+
+function compact() {
+  const sessions = []
+  const putBacks = []
+  for (const file of transcripts(ROOT)) {
+    let text
+    try {
+      text = fs.readFileSync(file, 'utf8')
+    } catch {
+      continue
+    }
+    const calls = new Map()
+    let prompts = 0
+    let boundary = false
+    for (const line of text.split('\n')) {
+      if (!line) continue
+      let m
+      try {
+        m = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (m.isSidechain) continue
+      if (typed(m)) prompts++
+      if (m.type === 'system' && m.subtype === 'compact_boundary') boundary = true
+      const u = m.type === 'assistant' && m.message && m.message.usage
+      const id = u && (m.message.id || m.requestId)
+      if (!id) continue
+      const ctx = ctxOf(u)
+      if (boundary && !calls.has(id)) {
+        // The first request after a real compaction: what it carried beyond the session's fixed part is what Claude Code put back.
+        putBacks.push(Math.max(0, ctx - (calls.size ? calls.values().next().value.ctx : 0)))
+        boundary = false
+      }
+      calls.set(id, { model: m.message.model, ctx, write1h: (u.cache_creation && u.cache_creation.ephemeral_1h_input_tokens) || 0, write: u.cache_creation_input_tokens || 0, output: u.output_tokens || 0 })
+    }
+    if (prompts >= 2 && calls.size) sessions.push([...calls.values()])
+  }
+  if (!sessions.length) {
+    console.log(`No interactive sessions in the last ${DAYS} days under ${ROOT}.`)
+    return
+  }
+  const median = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)]
+  const typical = median(sessions.map((cs) => cs[0].ctx))
+  // What Claude Code puts back is bounded by its own caps (the summary, five files of 5k at most, 25k of skills). A first
+  // request carrying more than that after a compaction also carried something else, a cold cache or a paste: the smallest measures it.
+  const putBack = putBacks.length ? Math.min(60e3, Math.max(5e3, Math.min(...putBacks))) : 35e3
+  // A session's writes went to the cache at the TTL its billing gave it; the replay writes at the same rate.
+  const writeWeightOf = (cs) => (cs.reduce((s, c) => s + c.write1h, 0) * 2 >= cs.reduce((s, c) => s + c.write, 0) ? W.write1h : W.write5m)
+
+  /** The cost of a session replayed with the context capped at `cap` (Infinity: as it happened). */
+  const replay = (cs, cap) => {
+    const ww = writeWeightOf(cs)
+    const fixed = cs[0].ctx > 2 * typical ? typical : cs[0].ctx
+    let cost = 0
+    let compactions = 0
+    let sim = 0 // the context the previous request left in the cache
+    let real = 0
+    for (const c of cs) {
+      const delta = Math.max(0, c.ctx - real)
+      real = c.ctx
+      const rw = readWeight(c.model)
+      if (sim && sim + delta > cap) {
+        compactions++
+        cost += sim * rw + SUMMARY_OUTPUT * W.output + putBack * ww
+        sim = fixed + putBack
+      }
+      cost += sim * rw + delta * ww + c.output * W.output
+      sim += delta
+    }
+    return { cost, compactions }
+  }
+
+  let actual = 0
+  for (const cs of sessions) for (const c of cs) actual += (c.ctx - c.write) * readWeight(c.model) + c.write * writeWeightOf(cs) + c.output * W.output
+  const base = sessions.reduce((s, cs) => s + replay(cs, Infinity).cost, 0)
+  const requests = sessions.reduce((s, cs) => s + cs.length, 0)
+  const kt = (t) => Math.round(t / 1000) + 'k'
+  console.log(`Last ${DAYS} days: ${sessions.length} interactive sessions, ${requests} requests. Fixed part ${kt(typical)} tokens; after a compaction the context restarts at ${kt(typical + putBack)}: the fixed part plus ${kt(putBack)} put back` + (putBacks.length ? ` (the smallest of the ${putBacks.length} compaction${putBacks.length === 1 ? '' : 's'} in your transcripts)` : ' (no compaction in your transcripts to measure it: assumed)') + '.')
+  console.log(`Replayed as it happened, the sessions come within ${((100 * Math.abs(base - actual)) / actual).toFixed(1)}% of what the API billed.\n`)
+  console.log('cap'.padEnd(8) + 'compactions'.padStart(12) + 'per session'.padStart(13) + 'cost vs today'.padStart(15))
+  for (const cap of COMPACT_CAPS) {
+    if (cap <= typical + putBack + 10e3) {
+      console.log(kt(cap).padEnd(8) + 'below the size a compaction restarts at'.padStart(40))
+      continue
+    }
+    let cost = 0
+    let n = 0
+    for (const cs of sessions) {
+      const r = replay(cs, cap)
+      cost += r.cost
+      n += r.compactions
+    }
+    const d = (100 * (cost - base)) / base
+    console.log(kt(cap).padEnd(8) + String(n).padStart(12) + (n / sessions.length).toFixed(1).padStart(13) + ((d <= 0 ? '−' : '+') + Math.abs(d).toFixed(1) + '%').padStart(15))
+  }
+  console.log(`\nA compaction is charged as one read of the context plus ${kt(SUMMARY_OUTPUT)} tokens of output. Set the cap with /autocompact 150k, or "autoCompactWindow" in settings.json.`)
+}
+
+module.exports = { transcripts, typed, messages, chars, CHARS_PER_TOKEN, W, readWeight, DAYS, ROOT, HOME }
 
 if (require.main === module) {
   if (args.includes('--tools')) tools()
   else if (args.includes('--fixed')) fixed()
   else if (args.includes('--split')) split()
   else if (args.includes('--agents')) agents()
+  else if (args.includes('--compact')) compact()
   else cost()
 }

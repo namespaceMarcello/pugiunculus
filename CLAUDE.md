@@ -1,11 +1,11 @@
 <!-- preferenze: 39f397b3 -->
 # Pugiunculus
 
-Hooks for Claude Code that cut what a coding session sends to the model. Three of
+Hooks for Claude Code that cut what a coding session sends to the model. Four of
 them refuse known waste (a whole-file `Read`, `cat BIG`, a fan-out of small
-subagents). A fourth, off by default, writes an effort suggestion, 1 to 10,
-next to each prompt; a lean reader agent, off by default, takes the large
-reads out of the conversation. Nothing ships on an argument: a hook that does not move a
+subagents, the first prompt after the cache went cold). A fifth, off by
+default, writes an effort suggestion, 1 to 10, next to each prompt; a lean
+reader agent, off by default, takes the large reads out of the conversation. Nothing ships on an argument: a hook that does not move a
 measured number is removed.
 
 Node, no dependencies, CommonJS (`.cjs`), Windows first.
@@ -62,8 +62,9 @@ replaced, not appended. This file: 200 lines.
 ## Commands
 
 ```bash
-node test.cjs                     # 38 tests: every hook decision, fed the JSON Claude Code sends
-node install.cjs                  # the three blockers into ~/.claude/settings.json
+node test.cjs                     # 43 tests: every hook decision, fed the JSON Claude Code sends
+node install.cjs                  # the four blockers into ~/.claude/settings.json
+node bench/cold.cjs               # what the cold-cache hook is worth on your own returns after an hour; --days 30
 node install.cjs --effort         # add the effort router: one line next to each prompt (off by default); detects your language, learns your words from history
 node bench/effort-score.cjs --learn   # learn word lists from your prompts and judge them on sessions they never saw
 node bench/effort-score.cjs --check   # harder: five folds by session, a split by time, a learning curve
@@ -76,6 +77,7 @@ node measure-context.cjs          # where a session's cost goes: re-reading, cac
 node measure-context.cjs --tools  # which tools' results weigh most, and what the big Reads were
 node measure-context.cjs --fixed  # skills, commands, agents, MCP servers listed on every move and never used
 node measure-context.cjs --split  # what a request carries, by category: fixed part, your words, tool results, the model's moves
+node measure-context.cjs --compact # what compacting at 150k..400k would have cost or saved: your sessions replayed with the cap
 node bench/fanout.cjs --report    # the fan-out experiment
 node bench/hard.cjs --report      # the chain experiment
 ```

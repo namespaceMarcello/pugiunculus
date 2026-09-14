@@ -33,7 +33,7 @@
  */
 
 const path = require('node:path')
-const { W, DAYS, ROOT } = require(path.join(__dirname, '..', 'measure-context.cjs'))
+const { W, readWeight, DAYS, ROOT } = require(path.join(__dirname, '..', 'measure-context.cjs'))
 const { score, LEVELS, USER_WORDS } = require(path.join(__dirname, '..', 'hooks', 'pugi-effort.cjs'))
 const lib = require(path.join(__dirname, 'effort-learn.cjs'))
 
@@ -223,6 +223,7 @@ if (SAVINGS) {
     if (byEffort[level]) console.log(level.padEnd(8) + String(byEffort[level]).padStart(16) + (mult[level] !== undefined ? mult[level].toFixed(2) : '?').padStart(12) + `   ${level === ref ? 'reference' : basis[level] ? basis[level] + ' classes seen at both levels' : 'no class seen at both levels: unknown, left unchanged'}`)
   let produced = 0
   let reread = 0
+  let rereadCost = 0
   let moved = 0
   let unknown = 0
   for (const t of turns) {
@@ -236,11 +237,12 @@ if (SAVINGS) {
     const delta = t.thinking * (to / from) - t.thinking
     produced += delta
     reread += delta * t.after
+    rereadCost += delta * t.after * readWeight(t.model)
     moved++
   }
-  const cost = produced * W.output + reread * W.read
+  const cost = produced * W.output + rereadCost
   console.log(`\nTurns the router would have moved to another level: ${moved} of ${turns.length}` + (unknown ? ` (${unknown} left as they were: level with no basis)` : '') + '.')
   console.log(`Thinking produced: ${produced <= 0 ? '−' : '+'}${k(Math.abs(produced))} tokens; re-read by later requests: ${reread <= 0 ? '−' : '+'}${k(Math.abs(reread))} token-reads.`)
-  console.log(`In cost, output at ${W.output}× and re-reads at ${W.read}×: ${cost <= 0 ? '−' : '+'}${((100 * Math.abs(cost)) / totalCost).toFixed(1)}% of what these sessions cost.`)
+  console.log(`In cost, output at ${W.output}× and re-reads at ${W.read}× (0.025× on Fable 5.1): ${cost <= 0 ? '−' : '+'}${((100 * Math.abs(cost)) / totalCost).toFixed(1)}% of what these sessions cost.`)
   console.log('An estimate: the multipliers come from medians of small groups, and a level never seen for a class is left unchanged.')
 }

@@ -2,7 +2,7 @@
 /**
  * pugi install / uninstall.
  *
- *   node install.cjs                add the three blockers to ~/.claude/settings.json
+ *   node install.cjs                add the four blockers to ~/.claude/settings.json (whole-file Read, cat BIG, fan-out, the cold cache)
  *   node install.cjs --effort       add the effort router: one hook that writes an effort suggestion next to each prompt; later runs keep it
  *   node install.cjs --effort --lang it   the same, plus the Italian word pack (hooks/effort-words.it.json) into ~/.claude/pugi
  *   node install.cjs --no-effort    take the effort router out, word pack included
@@ -50,6 +50,12 @@ const ENTRIES = [
     file: 'pugi-bash.cjs',
     what: 'blocks `cat BIG` and friends — the same waste through the shell',
   },
+  {
+    event: 'UserPromptSubmit',
+    matcher: '',
+    file: 'pugi-cold.cjs',
+    what: 'blocks the first prompt after the cache went cold, once, and prices /compact and /clear against it',
+  },
 ]
 
 // The effort router: one hook on the prompt, which writes a suggestion next to
@@ -70,7 +76,7 @@ const skillFile = (level) => path.join(SKILLS_DIR, 'effort-' + level, 'SKILL.md'
 // earlier versions installed (notebook, recap), so a first run after an update
 // cleans up the old entries and every run after that stays idempotent.
 const commandMatches = (entry, re) => (entry.hooks || []).some((h) => re.test(String(h.command || '')))
-const isOurs = (entry) => commandMatches(entry, /(?:squint|pugi)(?:-agents|-bash|-notebook|-effort|-recap)?\.cjs/)
+const isOurs = (entry) => commandMatches(entry, /(?:squint|pugi)(?:-agents|-bash|-cold|-notebook|-effort|-recap)?\.cjs/)
 const isEffort = (entry) => commandMatches(entry, /pugi-effort\.cjs/)
 
 // The lean reader: a subagent with three tools and ten lines of instructions,
@@ -253,7 +259,7 @@ if (UNINSTALL) {
   if (agentRemoved) console.log('removed     the lettore agent and its cache setting')
   console.log(removed ? 'removed     ' + removed + ' pugi hook(s)' : 'nothing to remove — pugi was not installed')
 } else {
-  for (const e of ENTRIES) console.log('installed   ' + e.matcher.padEnd(17) + e.what)
+  for (const e of ENTRIES) console.log('installed   ' + (e.matcher || 'prompt').padEnd(17) + e.what)
   if (effort) console.log('installed   ' + 'effort router'.padEnd(17) + 'writes an effort suggestion, 1 to 10, next to each prompt')
   if (packWritten) console.log('installed   ' + 'word pack'.padEnd(17) + packWritten + ' words added to the English defaults, in ' + WORDS_FILE)
   if (learned) {

@@ -195,3 +195,25 @@ the pruner paragraph; `measure-context.cjs` loses `--writes`, `--rereads`,
 are removed; STATO's references point at git history. What is left is the
 three blockers, the router, the reader, and the measurements a user runs
 before installing. Try it: `node measure-context.cjs --tools`, `node test.cjs`.
+
+### 2026-09-14 — cache reads priced per model, and the compaction replay
+
+`measure-context.cjs` weights cache reads by the request's model: 0.025× on
+Fable 5.1, 0.1× elsewhere (`readWeight`, also used by `bench/effort-score.cjs`).
+New `--compact`: every session replayed with the context capped at 150k, 200k,
+250k and 400k, each compaction charged one read of the context, 10k of summary
+output and what Claude Code puts back, measured on the compactions in the
+transcripts. On the last 7 days: −35% at 150k, −32% at 200k. Try it:
+`node measure-context.cjs --compact`, `node measure-context.cjs --compact --days 30`.
+
+### 2026-09-14 — the cold-cache hook
+
+`hooks/pugi-cold.cjs`, on UserPromptSubmit, installed with the blockers: when
+the transcript's last request is older than the cache TTL (an hour; five
+minutes when `promptCacheTtl` is `5m`; `PUGI_COLD_MINUTES` overrides), the
+prompt is blocked once with what continuing costs, what `/compact` costs
+instead, and that `/clear` is free; the same prompt again passes, a compaction
+after the last request passes, slash commands always pass. `bench/cold.cjs`
+replays the user's own returns after an hour: as it went, with `/compact`
+first, with `/clear`, and reads the hook's log. Four tests. Try it: leave a
+session for an hour, type anything; `node bench/cold.cjs`.

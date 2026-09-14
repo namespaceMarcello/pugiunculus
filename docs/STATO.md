@@ -6,7 +6,7 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
 ## Decisions
 
 - **The project is Pugiunculus** (2026-09-12), `namespaceMarcello/pugiunculus` on
-  GitHub. The folder on disk is still `Desktop\squint`; that is not a mistake.
+  GitHub. The folder on disk is `Desktop\pugiunculus` (renamed 2026-09-14; it was `Desktop\squint`).
 - **Nothing ships on an argument.** A hook arrives with a benchmark and its rows,
   or it does not arrive.
 - **The session notebook is out** (2026-09-14; it had shipped off since
@@ -86,6 +86,19 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
   the payload; and a small model resolving a confused request resolves it by
   guessing. A confused prompt is information for the model that reads it.
 
+- **The cold-cache hook ships on, with the blockers** (2026-09-14). The cache
+  lives one TTL after the last request; the first prompt after a longer idle
+  rewrites the whole conversation at 2×. On the user's transcripts
+  (`bench/cold.cjs`): 15 returns after more than an hour in 7 days, the
+  rewrites alone 13% of the week's cost, and the work that followed them 60%;
+  a `/compact` at each return would have cost 25% less (30 days: 6% and 13%).
+  The hook blocks that prompt once, prices continuing against `/compact` and
+  `/clear`, and passes the same prompt sent again; a compaction after the last
+  request passes; slash commands always pass. Not a threshold on context size:
+  the user asked for the hour alone, because a 99k rewrite repeated every day
+  wears as much as one big one. Its effect is the log's blocked-to-insisted
+  ratio, read after a week.
+
 ## Known problems
 
 - None open.
@@ -115,5 +128,29 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
   days — 27 turns with the line — every row but one has fewer than ten turns.
   The router stays opt-in until those numbers exist.
 
-- Consider having the installer write the auto-compaction window: the fixed 55k
-  is the largest untouched block on every move.
+- The auto-compaction window, measured (2026-09-14, `node measure-context.cjs
+  --compact`): on 1M models the automatic pass runs at ~967k, so the user's
+  sessions sit at a median 249k per request (359k over 30 days) and 1 of 18 was
+  ever compacted. Replayed with a cap, charging each compaction one read of the
+  context, 10k of summary output and the 36k Claude Code puts back (measured
+  on the one compaction in the transcripts): 150k −35%, 200k −32%, 250k −29%,
+  400k −17% over 7 days; −48% at 200k over 30 days. The replay reproduces the
+  billed cost within 8.5%. What it does not price is the detail a summary
+  loses. Next: a week with `/autocompact 200k`, then `--compact` again and the
+  correction rate; if it holds, the installer writes `autoCompactWindow`.
+
+- Cache-read price per model (2026-09-14): Fable 5.1 bills cache hits at
+  0.025× the input price, every other model at 0.1×. `measure-context.cjs` and
+  `bench/effort-score.cjs` now weight reads by the request's model; the shares
+  moved little because 64% of the last week's requests ran on Opus 5.
+
+- The prompt-cache TTL, simulated on the transcripts (2026-09-14, script in git
+  history): the 5-minute TTL would have cost +15% over 7 days and +17% over 30,
+  because of 56 pauses of 5-60 minutes a week; the hour reproduces the billed
+  cost within 2%. The hour is the default on a subscription but drops to five
+  minutes on usage credits, and 13% of the last 30 days' cache writes were at
+  five minutes. Candidate for the installer: `promptCacheTtl: "1h"`, one line.
+
+- After a week with the cold-cache hook on (2026-09-14): `node bench/cold.cjs`
+  for blocked against insisted, and whether the returns that compacted cost
+  what the replay said. If nobody ever compacts, the hook is a nag and goes.
