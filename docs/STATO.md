@@ -24,12 +24,12 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
 - **No hook rewrites the user's words.** They are 0.6% of a payload and the only
   part that cannot be rebuilt from disk.
 - **Compression happens at the level of blocks, not words** — see
-  `docs/potatore.md`.
+  the pruner note (removed from the repo 2026-09-14, in git history).
 - **The pruner is closed, not built** (2026-09-13). A `PostToolUse` hook cannot
   replace a built-in tool's output, the weight is in `Bash` volume and deliberate
   `Read` slices, and a hook cannot act on what is already in the conversation.
   The note keeps the reasons. Retroactive pruning is a proxy question, decided on
-  the ceiling `bench/prune-sim.cjs` measures, not before.
+  the ceiling `bench/prune-sim.cjs` (removed 2026-09-14, in git history) measures, not before.
 - **The effort router suggests, and sets nothing** (2026-09-14). The first
   version wrote four skills with `effort:` for the agent to invoke: measured
   over two days they landed 8 times in 28 (Claude Code bug #81313, #81318), and
@@ -44,18 +44,23 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
   does to thinking is `--text`, a week away. The words are English by default
   and learned from the user's own history at install, kept only when they win
   on held-out sessions.
-- **No proxy on `ANTHROPIC_BASE_URL` for per-request effort** (2026-09-14).
-  Fable 5.1 accepts an effort-only system message mid-conversation with the
-  cache intact, and a local proxy could add one with the scorer's level. Closed
-  on the same −1.1% ceiling: credentials would pass through it, a dead proxy
-  stops Claude until restarted, and a subscription login through a gateway is
-  undocumented. Not worth it for that number.
+- **No proxy on `ANTHROPIC_BASE_URL`** (2026-09-14, twice). For per-request
+  effort: the ceiling was −1.1%. For the API's context editing, which Claude
+  Code does not expose (issue #26215): the model's thinking is 20% of what a
+  request re-reads and the API keeps it billed as input on Opus 4.5+ and Fable
+  (docs, confirmed); the thinking replay (`bench/prune-sim.cjs --thinking`, removed 2026-09-14, in git history) replays
+  `clear_thinking` on 14 days — ceiling 6.9% with no cache penalty, 1.6% keeping
+  the current turn only with 24 sessions of 38 paying more, negative for every
+  wider window, because a rolling clear rewrites the cached tail every turn.
+  Tool results were 8.6% → under 1% by the same replay. Nothing a proxy could
+  reach pays for its risks: credentials through it, a dead proxy stops Claude,
+  subscription login through a gateway undocumented (#23022). Closed.
 
-- **No re-read blocker** (2026-09-14). `measure-context.cjs --rereads`: the same
+- **No re-read blocker** (2026-09-14). a re-read count (`measure-context.cjs --rereads`, removed 2026-09-14, in git history): the same
   slice read again, file unchanged, no compaction in between — 11 calls, 13k
   tokens, 3% of the Read tokens, in 2 sessions of 38 over 14 days. Claude Code
   already refuses exact duplicates; nothing left to move.
-- **No wider shell blocker** (2026-09-14). `measure-context.cjs --shell`: shell
+- **No wider shell blocker** (2026-09-14). a shell-result count (`measure-context.cjs --shell`, removed 2026-09-14, in git history): shell
   results are 58% of all tool-result tokens; those of 2k tokens or more are 100
   results, 324k tokens, 15% of all tool results — but 137k already had a filter
   on the pipe, and the biggest of the rest were whole-file `cat`s from before
@@ -63,7 +68,7 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
   under 500 lines heavy in bytes, which are deliberate slices. Under 100k tokens
   in 14 days where a refusal could act, on commands whose output cannot be sized
   before they run. No target.
-- **No Write blocker** (2026-09-13). `measure-context.cjs --writes`: 36 Write
+- **No Write blocker** (2026-09-13). `measure-context.cjs --writes` (removed 2026-09-14, in git history): 36 Write
   calls over already-open files in 14 days, 111k tokens of content. Nothing a
   refusal could move.
 - **Large reads go to a lean subagent, not the conversation** (2026-09-13).
@@ -87,16 +92,14 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
 
 ## Next steps
 
-- Decide the proxy on the number `bench/prune-sim.cjs` gives. On 14 days (35
-  sessions, 6,016 requests) the ceiling — every tool result older than ten
-  requests cleared, no cache penalty — is 8.6% of the cost; with the 1-hour cache
-  paid for, every batched policy saves under 1% and a third of the sessions pay
-  more. Sustained context drops without a compaction are small and rare (16, in
-  5 sessions, median 19k): nothing shows the harness clearing old results on its
-  own. The retroactive road looks closed; the user says so, not the script.
-- Read `node measure-context.cjs --fixed` and decide what to switch off. The
-  installer does nothing here until that decision is written: turning off a
-  plugin changes what the agent can do (`docs/privately.md`).
+- The fixed block (`--fixed`, 14% of what a request re-reads, ~56k per
+  request): the part the user controls is ~9k — 64 skills listed (7k, 5.4k of
+  it for 50 never used), 7 agent types, 7 MCP servers. Switching every unused
+  plugin off would move ~2% of re-reads at the cache-read rate: under 1% of
+  cost. `skillListingMaxDescChars` (default 1,536 chars) does not bite: the
+  listing averages ~360 chars per skill. Whether to switch plugins off is the
+  user's call on what the agent can do, not on cost.
+
 - Two levers `node measure-context.cjs --split` found, both unmeasured as
   levers (14 days, 35 sessions, what every request re-reads): **the model's
   thinking is the largest single block — 20% of everything re-read**. It is

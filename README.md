@@ -189,9 +189,7 @@ Eight tasks tied, one was worse with Pugiunculus, one was better. The one real l
 
 **Model choice beats every hook.** No hook can see that you picked an expensive model for mechanical work — that decision is already made by the time a tool call exists. Haiku with Pugiunculus answered all 50 questions for $0.56; Opus, needing neither hook, cost $1.99 for the same answers. No hook can fix that for you.
 
-**Claude Code already blocks exact duplicate re-reads** natively. Pugiunculus is about the first read, not the second. Measured on 14 days of the author's sessions (`node measure-context.cjs --rereads`): the same slice read again, file unchanged, no compaction in between, was 11 calls and 13k tokens out of 307 Reads and 439k — 3%, in 2 sessions of 38. Nothing for a hook to move.
-
-**A wider shell blocker has no clean target.** Shell results are 58% of all tool-result tokens on the same 14 days (`node measure-context.cjs --shell`), and the ones of 2k tokens or more are 100 results, 324k tokens, 15% of all tool results. But 137k of those already had a filter on the pipe; the biggest of the rest were whole-file `cat`s from sessions before the shell blocker existed, repeats the blocker let through on purpose, and `sed` ranges under 500 lines that were heavy in bytes — deliberate slices, the same thing the Read blocker lets through. What a refusal could still act on is under 100k tokens in 14 days, spread over commands whose output cannot be sized before they run.
+**Claude Code already blocks exact duplicate re-reads** natively. Pugiunculus is about the first read, not the second.
 
 **Effort levels change nothing here.** The obvious cheaper lever would be to raise the agent's reasoning budget and hope it picks Grep on its own. Tested: 20 more Haiku runs with Pugiunculus off, `effortLevel` set to `low` for one batch and `xhigh` for the other.
 
@@ -209,29 +207,9 @@ Either way the practical answer is the same: **turning that dial did not stop a 
 
 ---
 
-## Tried, measured, taken out
-
-Two things were built, measured and removed on 2026-09-14, on the rule that what moves no measured number does not stay. Their rows are in the git history; what happened is in `docs/archivio/FATTO.md`.
-
-**The session notebook.** Claude Code sends the whole conversation with every request: over one week of real sessions (20 of them, 2,948 requests — `node measure-context.cjs` does the same on yours), re-reading it was 73% of what the sessions cost, the median request carried 274k tokens, and not one session was ever compacted, because a 1M window never fills. The lever is to cut — `/autocompact`, `/clear` — and the catch is what a cut forgets. The notebook was what survived it, written by hooks and not by the model: the requests word for word, the files changed, one line per thing done, put back after every compaction, `/clear` or resume, with no rule for the model to follow. Benchmarked on 33 long sessions on a 40,000-line codebase, three arms with identical questions — **today** (Claude Code as it ships), **cut** (`--autocompact 100k`), **notebook** (the same cut, with the notebook put back) — Haiku 4.5, Sonnet 5 and Opus 5 at every effort level, $67 of model time:
-
-| | correct | codename kept | tag kept | sessions cut |
-|---|---|---|---|---|
-| today | 100% | 100% | 74% | 0 / 11 |
-| cut | 99% | 91% | 84% | 9 / 11 |
-| notebook | 100% | 100% | 81% | 10 / 11 |
-
-The mechanism worked: 13 injections for 13 cuts, no accuracy lost, the codename never lost. The gain never showed. The arm that never cuts loses the standing rule a quarter of the time on its own, so the probe measures how consistently a model obeys an old instruction, not what a cut costs; and the same Haiku arm, same questions, run twice, cost $0.73 and $1.25 — a spread wider than every difference between arms. Sixteen turns never reach the size where cutting pays. Not a failure: a mechanism that worked, without the measurement that would have justified it. It went.
-
-**The status line and its recap.** One sentence at the bottom of the terminal with what the hooks did in the session, and a recap after each answer. A window on the hooks, not a saving: it moved no number, and it went with the same rule. The router's own line under the prompt it judged — `pugi: effort → 2/10 (mechanical, short)` — stays, since the hook writes it anyway.
-
-**The pruner** was closed before being built: `docs/potatore.md` has the reasons, and `node bench/prune-sim.cjs` replays its ceiling on your own transcripts.
-
----
-
 ## The effort router: think as much as the request needs
 
-The model's own thinking is the largest single block a session re-reads — 20% of everything, measured with `node measure-context.cjs --split` on 14 days of real work — and it is produced at whatever effort the session was set to, whether the prompt was "commit e push" or a design question. Nothing in Claude Code lets a hook change the effort of a request. A skill can, and the first version of the router had four of them for the agent to invoke: measured over two days they landed 8 times in 28 (a Claude Code bug, [#81313](https://github.com/anthropics/claude-code/issues/81313)), and even landing every time the ceiling was −1.1% of the sessions' cost (`node bench/effort-score.cjs --savings`, 14 days). So the router does the one thing a hook can do reliably: it says.
+The model's own thinking is the largest single block a session re-reads — 20% of everything, measured with `node measure-context.cjs --split` on 14 days of real work — and it is produced at whatever effort the session was set to, whether the prompt was "commit e push" or a design question. Nothing in Claude Code lets a hook change the effort of a request, so the router does the one thing a hook can do: it says.
 
 The router is one hook. On every prompt, `hooks/pugi-effort.cjs` scores the text with a word list — no model, no network — and adds one line next to it: *Effort suggested for this turn: 3/10 (mechanical, short).* Nothing else: no instruction on how to think, no skill to invoke, no parameter set. The number is the raw score on a 1-to-10 scale. On the author's 14 days the score runs from −5 to +6 and the thinking of the turns follows it step by step — 214 tokens at −5, 1.6k at 0, 4.8k at +2, 5.3k at +4 — so folding it into five named levels was throwing most of it away. A bare "vai" keeps the previous turn's number. The prompt itself is never touched.
 
@@ -268,7 +246,7 @@ On the author's 814 prompts, judged on sessions the words never saw:
 
 One split can be lucky, so `node bench/effort-score.cjs --check` does it three harder ways on the same 817 prompts: five folds by session, every session judged once by words that never saw it — defaults 63%, learned 76% on the mean, and better on every fold; a split by time, learned on the first three weeks and judged on the last — 55% to 67%, the weakest, because the last week's work was different from the rest; and a learning curve — 50 prompts give 63%, 100 give 67%, 200 give 72%, which is why the installer asks for a hundred.
 
-**Does the line alone move thinking?** `node bench/effort-score.cjs --text` compares, at the same session level and the same scored class, the turns that had the line next to the prompt with the turns that did not. On the author's first two days — 27 turns with the line — the one row with ten turns on both sides, a `max` session and prompts scored `medium`, reads 1.1k thinking per turn against 1.1k, and 378 per request against 540; the other rows have one to six turns and go both ways. An anecdote. The number is a week away, and it is why the router still ships **off**. One thing the same day did settle: counting how many times a signal fires, instead of whether it fires, separated hard turns from easy ones worse — 57% against 75% — so each signal counts once.
+**Does the line move thinking?** Not measured yet. `node bench/effort-score.cjs --text` compares, at the same session level and the same scored class, the turns that had the line next to the prompt with the turns that did not; it needs a week of sessions to say anything, and it is why the router ships **off**.
 
 ### Reading in a lean agent
 
@@ -282,8 +260,6 @@ A file read in the main conversation stays there and is re-read by every later r
 | `lettore`, Sonnet | 10,657 tokens |
 
 The whole-file `Read` refusal names it when it is installed. Hand it large reads and explorations across files with a complete brief — which files, what to look for, what shape of answer; open thirty lines yourself.
-
-One number that closed a hook before it was written: `node measure-context.cjs --writes` counts `Write` calls over files the session had already opened, the case where an `Edit` would have carried only the changed lines. 36 calls in 14 days, 111k tokens. A blocker there would move nothing worth its own refusals.
 
 ---
 
@@ -312,12 +288,7 @@ node measure-context.cjs          # where a session's cost goes: re-reading the 
 node measure-context.cjs --tools  # which tools' results weigh most, and what the big Reads were (slices, insisted, hook off)
 node measure-context.cjs --fixed  # every skill, command, agent and MCP server listed to the model on each move, and which ones you never use
 node measure-context.cjs --split  # what a request carries, by category: the fixed part, your words, tool results, the model's text, calls and thinking
-node measure-context.cjs --rereads # the same slice read again, file unchanged: what a re-read blocker would have to move
-node measure-context.cjs --shell   # shell results of 2k tokens or more, by command, with or without a filter
-node bench/prune-sim.cjs          # what clearing old tool results would save, replayed on your sessions, cache re-writes included
 ```
-
-The last one exists because the obvious next hook — prune tool results after the fact — cannot be a hook at all, and the replay says what a proxy would be worth before one is written. The reasons are in `docs/potatore.md`.
 
 **The trade, in one line:** a blocked read is worth ~4,800 tokens. A pointless block costs ~85 (the refusal, then you read it anyway). Pugiunculus pays for itself if it is right **more than 1.9% of the time**.
 

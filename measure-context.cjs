@@ -8,9 +8,6 @@
  *   node measure-context.cjs --fixed    what is listed to the model on every move and never used: skills, agents, MCP servers
  *   node measure-context.cjs --split    what a request carries, by category: the fixed part, your words, tool results, the model's text, calls and thinking
  *   node measure-context.cjs --agents   what a subagent pays before doing anything, and what they cost together
- *   node measure-context.cjs --writes   Write calls over files already read or edited in the session — what an Edit would have spared
- *   node measure-context.cjs --rereads  Read calls that fetch a slice the session already has, unchanged — what a re-read blocker would have to move
- *   node measure-context.cjs --shell    shell results of 2k tokens or more: which commands, with or without a filter — what a wider shell blocker would have to move
  *
  * Claude Code sends the whole conversation with every request. This reads your
  * own transcripts and splits what that costs: re-reading the conversation,
@@ -20,8 +17,8 @@
  * same ratios, so the shares hold whichever model you run. Interactive sessions
  * only: two typed prompts or more, subagents left out. Nothing leaves your machine.
  *
- * `bench/prune-sim.cjs` requires this file for the transcript parsing; running
- * it directly does the measuring.
+ * `bench/effort-score.cjs` requires this file for the transcript parsing;
+ * running it directly does the measuring.
  */
 
 const fs = require('node:fs')
@@ -756,232 +753,6 @@ function agents() {
   console.log('The first request is paid once per agent. Its fixed part is cached across agents of the same type for the subagent cache TTL: five minutes by default, an hour with subagentPromptCacheTtl "1h".')
 }
 
-// ---------------------------------------------------------------------------
-// --writes: Write calls over files the session had already read or edited.
-//
-// A Write carries the whole file in the call, and the call stays in the
-// conversation. When the file was already open in the session, an Edit would
-// have carried only the changed lines. This counts those Writes and what they
-// weighed — the number a Write blocker would have to move.
-
-function writes() {
-  let sessions = 0
-  let fresh = 0
-  let freshChars = 0
-  let over = 0
-  let overChars = 0
-  const sizes = []
-  for (const file of transcripts(ROOT)) {
-    const msgs = messages(file)
-    if (!msgs) continue
-    sessions++
-    const known = new Set()
-    for (const m of msgs) {
-      if (m.isSidechain || m.type !== 'assistant') continue
-      const c = m.message && m.message.content
-      if (!Array.isArray(c)) continue
-      for (const b of c) {
-        if (!b || b.type !== 'tool_use' || !b.input || !b.input.file_path) continue
-        const key = String(b.input.file_path).replace(/\\/g, '/').toLowerCase()
-        if (b.name === 'Write') {
-          const n = String(b.input.content || '').length
-          if (known.has(key)) {
-            over++
-            overChars += n
-            sizes.push(n)
-          } else {
-            fresh++
-            freshChars += n
-          }
-        }
-        if (b.name === 'Read' || b.name === 'Edit' || b.name === 'MultiEdit' || b.name === 'Write') known.add(key)
-      }
-    }
-  }
-  if (!sessions) {
-    console.log(`No interactive sessions in the last ${DAYS} days under ${ROOT}.`)
-    return
-  }
-  sizes.sort((a, b) => a - b)
-  console.log(`Last ${DAYS} days: ${sessions} interactive sessions.`)
-  console.log(`Write of a file the session had not opened before: ${fresh} calls, ${k(freshChars)} tokens of content. New files; nothing to spare there.`)
-  console.log(
-    `Write over a file already read or edited in the session: ${over} calls, ${k(overChars)} tokens of content` +
-      (sizes.length ? `, median ${k(sizes[Math.floor(sizes.length / 2)])} per call, largest ${k(sizes[sizes.length - 1])}.` : '.')
-  )
-  console.log('Each of those calls stays in the conversation and is re-read by every later request; an Edit would have carried the changed lines only.')
-}
-
-// ---------------------------------------------------------------------------
-// --rereads: Read calls that fetch a slice the session already has.
-//
-// The Read blocker stops a whole file; it does not stop the same forty lines
-// read twice. This counts, per session, a Read whose path, offset and limit
-// match an earlier Read, with no Edit, Write or MultiEdit on that path in
-// between and no compaction in between (after a cut the earlier text is gone,
-// and reading again is right). What those carried is the number a re-read
-// blocker would have to move.
-
-function rereads() {
-  let sessions = 0
-  let reads = 0
-  let readChars = 0
-  let again = 0
-  let againChars = 0
-  let refreshed = 0
-  let whole = 0
-  const sizes = []
-  const perSession = []
-  for (const file of transcripts(ROOT)) {
-    const msgs = messages(file)
-    if (!msgs) continue
-    sessions++
-    const uses = new Map() // tool_use id -> block
-    let seen = new Map() // path|offset|limit -> the edit count of the path when it was read
-    const edits = new Map() // path -> edits so far
-    let mine = 0
-    for (const m of msgs) {
-      if (m.isSidechain) continue
-      if (m.isCompactSummary) seen = new Map()
-      const c = m.message && m.message.content
-      if (!Array.isArray(c)) continue
-      if (m.type === 'assistant') {
-        for (const b of c) {
-          if (!b || b.type !== 'tool_use') continue
-          if (b.id) uses.set(b.id, b)
-          if ((b.name === 'Edit' || b.name === 'Write' || b.name === 'MultiEdit' || b.name === 'NotebookEdit') && b.input && (b.input.file_path || b.input.notebook_path)) {
-            const p = String(b.input.file_path || b.input.notebook_path).replace(/\\/g, '/').toLowerCase()
-            edits.set(p, (edits.get(p) || 0) + 1)
-          }
-        }
-      } else if (m.type === 'user') {
-        for (const b of c) {
-          if (!b || b.type !== 'tool_result') continue
-          const use = uses.get(b.tool_use_id)
-          if (!use || use.name !== 'Read' || !use.input || !use.input.file_path) continue
-          const n = chars(b.content)
-          if (b.is_error || n < 200) continue // a refusal, a missing file, an empty one
-          reads++
-          readChars += n
-          const p = String(use.input.file_path).replace(/\\/g, '/').toLowerCase()
-          const key = p + '|' + (use.input.offset || 0) + '|' + (use.input.limit || '')
-          const e = edits.get(p) || 0
-          if (seen.has(key)) {
-            if (seen.get(key) === e) {
-              again++
-              againChars += n
-              mine += n
-              sizes.push(n)
-              if (!use.input.offset && !use.input.limit) whole++
-            } else refreshed++
-          }
-          seen.set(key, e)
-        }
-      }
-    }
-    if (mine) perSession.push(mine)
-  }
-  if (!sessions) {
-    console.log(`No interactive sessions in the last ${DAYS} days under ${ROOT}.`)
-    return
-  }
-  sizes.sort((a, b) => a - b)
-  perSession.sort((a, b) => b - a)
-  const pct = (x, of) => (of ? Math.round((100 * x) / of) : 0) + '%'
-  console.log(`Last ${DAYS} days: ${sessions} interactive sessions, ${reads} Read results carrying ${k(readChars)} tokens.`)
-  console.log(
-    `The same slice again, file unchanged, no cut in between: ${again} calls, ${k(againChars)} tokens (${pct(againChars, readChars)} of the Read tokens)` +
-      (sizes.length ? `; median ${tok(sizes[Math.floor(sizes.length / 2)])} tokens per call, largest ${k(sizes[sizes.length - 1])}; ${whole} of them whole files.` : '.')
-  )
-  console.log(`The same slice again after the file was edited: ${refreshed} calls — those are right, and not counted.`)
-  if (perSession.length) console.log(`Sessions with any: ${perSession.length} of ${sessions}; the worst carried ${k(perSession[0])} tokens of re-reads, the median of those ${k(perSession[Math.floor(perSession.length / 2)])}.`)
-  console.log('Each re-read is paid as a tool result and re-read by every later request; the first copy is still in the conversation.')
-}
-
-// ---------------------------------------------------------------------------
-// --shell: shell results of 2k tokens or more, by command.
-//
-// The Bash blocker stops `cat BIG` because the file's size is known before
-// the command runs. Most shell output cannot be sized in advance. This lists
-// which commands produced the big results, how much they carried, and whether
-// a filter (head, tail, grep, Select-Object…) was already on the pipe — the
-// number a wider shell blocker would have to move, and where.
-
-function shell() {
-  const FILTER = /\|\s*(?:head|tail|grep|rg|sed|awk|cut|wc|sort|uniq|Select-Object|Select-String|findstr|Measure-Object|Out-String -Stream)\b|(?:\s-n\s*\d+|\s--max-count|\s-c\s*\d+|\s-\d+\b|-TotalCount|-First\s+\d+|-Tail\s+\d+)/i
-  const family = (cmd) => {
-    let s = String(cmd || '').trim()
-    // cd X && …, VAR=x …, rtk …: the command is what follows
-    s = s.replace(/^(?:cd\s+\S+\s*(?:&&|;)\s*)+/, '').replace(/^(?:\w+=\S+\s+)+/, '').replace(/^rtk\s+/, '')
-    const w = s.split(/\s+/)
-    const first = (w[0] || '?').replace(/^.*[\\/]/, '')
-    if (/^(git|npm|pnpm|yarn|npx|node|python|python3|cargo|go|dotnet|docker|gh)$/.test(first)) return first + ' ' + (w[1] || '').replace(/^.*[\\/]/, '').slice(0, 20)
-    return first.slice(0, 24)
-  }
-  const byFamily = new Map() // family -> { n, chars, big, bigChars, bigFiltered, bigFilteredChars }
-  let sessions = 0
-  let results = 0
-  let resultChars = 0
-  let allTools = 0
-  let bigN = 0
-  let bigChars = 0
-  let bigFiltered = 0
-  let bigFilteredChars = 0
-  for (const file of transcripts(ROOT)) {
-    const msgs = messages(file)
-    if (!msgs) continue
-    sessions++
-    const uses = new Map()
-    for (const m of msgs) {
-      if (m.isSidechain) continue
-      const c = m.message && m.message.content
-      if (!Array.isArray(c)) continue
-      if (m.type === 'assistant') {
-        for (const b of c) if (b && b.type === 'tool_use' && b.id) uses.set(b.id, b)
-      } else if (m.type === 'user') {
-        for (const b of c) {
-          if (!b || b.type !== 'tool_result') continue
-          const n = chars(b.content)
-          allTools += n
-          const use = uses.get(b.tool_use_id)
-          if (!use || (use.name !== 'Bash' && use.name !== 'PowerShell') || !use.input) continue
-          results++
-          resultChars += n
-          const f = family(use.input.command)
-          const t = byFamily.get(f) || { n: 0, chars: 0, big: 0, bigChars: 0, bigFiltered: 0, bigFilteredChars: 0 }
-          t.n++
-          t.chars += n
-          if (n >= BIG) {
-            const filtered = FILTER.test(String(use.input.command || ''))
-            t.big++
-            t.bigChars += n
-            bigN++
-            bigChars += n
-            if (filtered) {
-              t.bigFiltered++
-              t.bigFilteredChars += n
-              bigFiltered++
-              bigFilteredChars += n
-            }
-          }
-          byFamily.set(f, t)
-        }
-      }
-    }
-  }
-  if (!sessions) {
-    console.log(`No interactive sessions in the last ${DAYS} days under ${ROOT}.`)
-    return
-  }
-  const pct = (x, of) => (of ? Math.round((100 * x) / of) : 0) + '%'
-  console.log(`Last ${DAYS} days: ${sessions} interactive sessions, ${results} shell results carrying ${k(resultChars)} tokens (${pct(resultChars, allTools)} of all tool results).`)
-  console.log(`Of 2k tokens or more: ${bigN} results, ${k(bigChars)} tokens (${pct(bigChars, resultChars)} of the shell tokens, ${pct(bigChars, allTools)} of all tool results); ${bigFiltered} of them, ${k(bigFilteredChars)} tokens, already had a filter on the pipe.\n`)
-  console.log('command'.padEnd(26) + 'calls'.padStart(7) + 'tokens'.padStart(8) + '   2k+ (n, tokens)   of which filtered')
-  const rows = [...byFamily.entries()].filter(([, t]) => t.big).sort((a, b) => b[1].bigChars - a[1].bigChars)
-  for (const [f, t] of rows.slice(0, 20)) console.log(f.padEnd(26) + String(t.n).padStart(7) + k(t.chars).padStart(8) + `   ${String(t.big).padStart(3)}, ${k(t.bigChars).padStart(6)}` + `   ${t.bigFiltered}, ${k(t.bigFilteredChars)}`)
-  console.log('\nA big result with a filter already on it is not a limiter problem; one without is where a refusal-until-narrowed could act. Every result stays in the conversation and is re-read by every later request.')
-}
-
 module.exports = { transcripts, typed, messages, chars, CHARS_PER_TOKEN, W, DAYS, ROOT, HOME }
 
 if (require.main === module) {
@@ -989,8 +760,5 @@ if (require.main === module) {
   else if (args.includes('--fixed')) fixed()
   else if (args.includes('--split')) split()
   else if (args.includes('--agents')) agents()
-  else if (args.includes('--writes')) writes()
-  else if (args.includes('--rereads')) rereads()
-  else if (args.includes('--shell')) shell()
   else cost()
 }

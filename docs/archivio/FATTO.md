@@ -167,3 +167,31 @@ were pre-blocker `cat`s, repeats let through on purpose, and byte-heavy `sed`
 ranges under 500 lines. Neither becomes a hook; both are in `docs/STATO.md`
 §Decisions and in the README under "Where it does not help". Try it:
 `node measure-context.cjs --rereads`, `node measure-context.cjs --shell`.
+
+### 2026-09-14 — what the API lets one touch, and the thinking replay
+
+Read the API docs for the levers a request has: context editing
+(`clear_thinking`, `clear_tool_uses`), server-side compaction, per-message
+effort, cache TTL, tool search; and the Claude Code docs for what the harness
+exposes (a Haiku agent did that read). Claude Code exposes cache TTL, the
+compaction threshold, effort, tool search and the skill-listing caps, not
+context editing. The docs confirm that on Opus 4.5+ and Fable prior turns'
+thinking stays in context and is billed as input. `bench/prune-sim.cjs
+--thinking` replays the API's `clear_thinking` on the transcripts (the request
+model now carries each request's thinking tokens and its user turn): ceiling
+6.9%, 1.6% keeping the current turn only, negative beyond. The proxy is closed
+on that number too. `--fixed` read: the user-controlled part of the fixed block
+is ~9k of 56k per request, under 1% of cost. Try it: `node bench/prune-sim.cjs
+--thinking`, `node measure-context.cjs --fixed`.
+
+### 2026-09-14 — the repo holds only what it offers
+
+New rule in CLAUDE.md: a road tried and not taken is not mentioned in the
+README, the code or the commands; its number goes in STATO §Decisions and its
+script stays in git history. Applied: the README loses "Tried, measured, taken
+out", the re-read and shell paragraphs, the router's first-version history and
+the pruner paragraph; `measure-context.cjs` loses `--writes`, `--rereads`,
+`--shell`; `bench/prune-sim.cjs`, `docs/potatore.md` and `docs/privately.md`
+are removed; STATO's references point at git history. What is left is the
+three blockers, the router, the reader, and the measurements a user runs
+before installing. Try it: `node measure-context.cjs --tools`, `node test.cjs`.

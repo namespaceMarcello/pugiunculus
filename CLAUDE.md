@@ -27,6 +27,11 @@ Node, no dependencies, CommonJS (`.cjs`), Windows first.
   reasons, the bugs met on the way and the story go in `docs/STATO.md`.
 - Ask the questions before starting, not halfway.
 - A benchmark that spends money runs only when the user asks for it.
+- **The repo holds only what is offered to whoever installs it.** A road tried
+  and not taken — a candidate hook, a design, a measurement made to decide —
+  is not mentioned in the README, the code or the commands: its number goes in
+  `docs/STATO.md` §Decisions, one paragraph, and the script that produced it
+  stays in git history. Nothing is documented as "considered".
 
 ### Before every commit: document
 
@@ -37,7 +42,6 @@ Node, no dependencies, CommonJS (`.cjs`), Windows first.
 | a defect, found or closed | `docs/STATO.md` §Known problems |
 | a step done or discovered | `docs/STATO.md` §Next steps |
 | what a hook does, or a measured number | `README.md` — it is the public truth |
-| the design of something not built yet | `docs/<topic>.md` |
 
 Caps: `FATTO.md` grows. `STATO.md` does not — 40 KB, and its sections are
 replaced, not appended. This file: 200 lines.
@@ -49,8 +53,6 @@ replaced, not appended. This file: 200 lines.
 | Question about… | Open |
 |---|---|
 | what each hook blocks, and the numbers behind it | `README.md` |
-| the pruner — why it is closed, and what replaced it | `docs/potatore.md` |
-| what the harness, skills and plugins inject before any tool runs, and what it costs — **open, to think about** | `docs/privately.md` |
 | where the project stands: decisions, defects, next steps | `docs/STATO.md` |
 | what was done, and when | `docs/archivio/FATTO.md` |
 | what a session actually sends to the model | run `node measure-context.cjs` |
@@ -69,9 +71,6 @@ node bench/effort-score.cjs --text    # did the line move thinking? turns with i
 node install.cjs --lettore        # add the lean reader agent + subagent cache for an hour (off by default)
 node bench/effort-score.cjs       # does the scorer separate easy turns from hard ones, on your own prompts
 node measure-context.cjs --agents # what a subagent pays before doing anything
-node measure-context.cjs --writes # Write calls over files already open: what an Edit would have spared
-node measure-context.cjs --rereads # the same slice read again, file unchanged: what a re-read blocker would have to move
-node measure-context.cjs --shell   # shell results of 2k tokens or more, by command, with or without a filter
 node measure.cjs                  # what whole-file reads cost in your own history
 node measure-context.cjs          # where a session's cost goes: re-reading, cache writes, output, prompts
 node measure-context.cjs --tools  # which tools' results weigh most, and what the big Reads were
@@ -79,7 +78,6 @@ node measure-context.cjs --fixed  # skills, commands, agents, MCP servers listed
 node measure-context.cjs --split  # what a request carries, by category: fixed part, your words, tool results, the model's moves
 node bench/fanout.cjs --report    # the fan-out experiment
 node bench/hard.cjs --report      # the chain experiment
-node bench/prune-sim.cjs          # the ceiling of clearing old tool results, replayed on your own transcripts
 ```
 
 `node test.cjs` must be green before a commit.
