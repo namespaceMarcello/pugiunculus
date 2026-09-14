@@ -129,7 +129,14 @@ const PRICES = [
   [/haiku/, { input: 1, write1h: 2, write5m: 1.25, read: 0.1, output: 5 }],
 ]
 const pricesOf = (model) => (PRICES.find(([re]) => re.test(model || '')) || PRICES[2])[1]
-const dollars = (x) => (x > 0 && x < 0.005 ? '<$0.01' : '$' + (Math.round(x * 100) / 100).toFixed(2))
+const dollars = (x) => '$' + (x >= 1 || x === 0 ? x.toFixed(2) : x.toFixed(3))
+const price = (x) => '$' + (x % 1 ? x.toFixed(2) : String(x))
+const n = (t) => Math.round(t).toLocaleString('en-US')
+/** "claude-fable-5-1" → "Fable 5.1"; "claude-haiku-4-5-20251001" → "Haiku 4.5". */
+const modelName = (id) => {
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d+))?/.exec(id || '')
+  return m ? m[1][0].toUpperCase() + m[1].slice(1) + ' ' + m[2] + (m[3] ? '.' + m[3] : '') : id || 'unknown model'
+}
 const NO_COLOR = process.env.NO_COLOR !== undefined || process.env.PUGI_COLOR === '0'
 const paint = (code, s) => (NO_COLOR ? s : `\x1b[${code}m${s}\x1b[0m`)
 const red = (s) => paint(31, s)
@@ -155,17 +162,26 @@ function choices(ctx, fixed, prices, ttl) {
     ['/clear', 0, (fixed * prices.read) / M, 'the history', red],
   ]
   const [, now0, later0] = rows[0]
-  // The header reads as a sentence with each row: "if you continue, you pay now $2.65, then $0.13 on every request, and you lose nothing".
-  const widths = [14, 24, 24, 38]
+  // What the tokens are, per cell: the count and its kind first, the dollars and the saving in parentheses.
+  const kinds = [
+    [n(ctx) + ' cache write', n(ctx) + ' cache read'],
+    [n(ctx) + ' in + ' + n(SUMMARY_TOKENS) + ' out', n(restart) + ' cache read'],
+    ['0', n(fixed) + ' cache read'],
+  ]
+  // The header reads as a sentence with each row: "if you continue, you pay now 265,000 tokens written, then 265,000 read on every request, and you lose nothing".
+  const widths = [14, 38, 38, 38]
   const pad = (s, w) => s + ' '.repeat(Math.max(0, w - s.length))
-  const amount = (x, of, w) => (of === x ? red(pad(dollars(x), w)) : pad(dollars(x), 8) + green(pad('(' + pct(x, of) + ')', w - 8)))
+  const amount = (kind, x, of, w) => {
+    const paren = of === x ? ' (' + dollars(x) + ')' : ' (' + dollars(x) + ', ' + pct(x, of) + ')'
+    return of === x ? red(pad(kind + paren, w)) : kind + green(paren) + pad('', w - kind.length - paren.length)
+  }
   const rule = (l, m, r) => '  ' + l + widths.map((w) => '─'.repeat(w + 2)).join(m) + r
   const row = (cells) => '  │ ' + cells.join(' │ ') + ' │'
   return [
     rule('┌', '┬', '┐'),
-    row([pad('if you…', widths[0]), pad('you pay now', widths[1]), pad('then, on every request', widths[2]), pad('and you lose', widths[3])]),
+    row([pad('if you…', widths[0]), pad('you pay now, tokens', widths[1]), pad('then, on every request, tokens', widths[2]), pad('and you lose', widths[3])]),
     rule('├', '┼', '┤'),
-    ...rows.map(([name, now, later, lose, cLose], i) => row([pad(name, widths[0]), amount(now, now0, widths[1]), amount(later, later0, widths[2]), (i ? cLose : green)(pad(lose, widths[3]))])),
+    ...rows.map(([name, now, later, lose, cLose], i) => row([pad(name, widths[0]), amount(kinds[i][0], now, now0, widths[1]), amount(kinds[i][1], later, later0, widths[2]), (i ? cLose : green)(pad(lose, widths[3]))])),
     rule('└', '┴', '┘'),
   ].join('\n')
 }
@@ -256,12 +272,14 @@ function run(ev) {
   const hours = idle >= 120 ? Math.floor(idle / 60) + 'h ' + (idle % 60) + 'm' : idle + ' min'
   const kept = ttl >= 60 ? (ttl === 60 ? 'an hour' : ttl / 60 + ' hours') : ttl + ' minutes'
   const fixed = Math.min(last.ctx, firstRequest(ev.transcript_path) || 55e3)
+  const prices = pricesOf(last.model)
   return {
     decision: 'block',
     reason:
       `pugi: you were away ${hours}; the cache keeps the conversation for ${kept}. Your prompt is on hold.\n` +
-      `The conversation is ${k(last.ctx)} tokens. What each choice costs, at list price for ${last.model || 'this model'}:\n\n` +
-      choices(last.ctx, fixed, pricesOf(last.model), ttl) +
+      `Model in use: ${modelName(last.model)} (${last.model || 'unknown'}). The conversation is ${n(last.ctx)} tokens.\n` +
+      `List price per million tokens: input ${price(prices.input)}, cache write ${price(ttl >= 60 ? prices.write1h : prices.write5m)}, cache read ${price(prices.read)}, output ${price(prices.output)}.\n\n` +
+      choices(last.ctx, fixed, prices, ttl) +
       '\n' +
       dim('  ↑ brings your prompt back; Enter sends it and continues as it is.'),
   }

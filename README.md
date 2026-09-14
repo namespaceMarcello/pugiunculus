@@ -121,23 +121,24 @@ Sonnet read the same message and, four times out of five, wrote `[separate conte
 
 Claude Code sends the whole conversation with every request and reads it from a cache: 0.1× the input price (0.025× on Fable 5.1) instead of 1×. The cache lives one TTL after the last request — an hour on a subscription, five minutes on an API key or on usage credits. Come back later and the first prompt, whatever it says, rewrites the whole conversation at the cache-write rate, 2×. A 265k context is 530k there: twenty turns of re-reading it warm, for "commit".
 
-The fourth hook reads the transcript on every prompt. When the last request is older than the TTL it blocks the prompt once and shows a table: what continuing, `/compact` first and `/clear` cost now and on every later request, in dollars at list price for the model in use, and what each one loses — nothing, the detail a summary drops, the whole history. On a subscription the dollars are what your plan absorbs. Colours say which way each number goes (`NO_COLOR` or `PUGI_COLOR=0` turns them off). `↑` brings the prompt back; sent again, it goes through. A `/compact` after the last request goes through too: the cache is rebuilt either way. Slash commands are never blocked.
+The fourth hook reads the transcript on every prompt. When the last request is older than the TTL it blocks the prompt once and shows a table: what continuing, `/compact` first and `/clear` cost now and on every later request — the tokens and what kind of tokens they are, the dollars at list price for the model in use in parentheses — and what each one loses: nothing, the detail a summary drops, the whole history. It names the model it found in the transcript and the four list prices it used. On a subscription the dollars are what your plan absorbs. Colours say which way each number goes (`NO_COLOR` or `PUGI_COLOR=0` turns them off). `↑` brings the prompt back; sent again, it goes through. A `/compact` after the last request goes through too: the cache is rebuilt either way. Slash commands are never blocked.
 
 ```
 pugi: you were away 2h 15m; the cache keeps the conversation for an hour. Your prompt is on hold.
-The conversation is 265k tokens. What each choice costs, at list price for claude-opus-5:
+Model in use: Opus 5 (claude-opus-5). The conversation is 265,000 tokens.
+List price per million tokens: input $5, cache write $10, cache read $0.50, output $25.
 
-  ┌────────────────┬──────────────────────────┬──────────────────────────┬────────────────────────────────────────┐
-  │ if you…        │ you pay now              │ then, on every request   │ and you lose                           │
-  ├────────────────┼──────────────────────────┼──────────────────────────┼────────────────────────────────────────┤
-  │ continue       │ $2.65                    │ $0.13                    │ nothing                                │
-  │ /compact first │ $1.58   (−41%)           │ $0.05   (−66%)           │ detail: a summary replaces the history │
-  │ /clear         │ $0.00   (−100%)          │ $0.03   (−79%)           │ the history                            │
-  └────────────────┴──────────────────────────┴──────────────────────────┴────────────────────────────────────────┘
+  ┌────────────────┬────────────────────────────────────────┬────────────────────────────────────────┬────────────────────────────────────────┐
+  │ if you…        │ you pay now, tokens                    │ then, on every request, tokens         │ and you lose                           │
+  ├────────────────┼────────────────────────────────────────┼────────────────────────────────────────┼────────────────────────────────────────┤
+  │ continue       │ 265,000 cache write ($2.65)            │ 265,000 cache read ($0.133)            │ nothing                                │
+  │ /compact first │ 265,000 in + 10,000 out ($1.57, −41%)  │ 90,000 cache read ($0.045, −66%)       │ detail: a summary replaces the history │
+  │ /clear         │ 0 ($0.00, −100%)                       │ 55,000 cache read ($0.028, −79%)       │ the history                            │
+  └────────────────┴────────────────────────────────────────┴────────────────────────────────────────┴────────────────────────────────────────┘
   ↑ brings your prompt back; Enter sends it and continues as it is.
 ```
 
-The arithmetic behind a row, Opus 5 at list price: continuing writes the 265k back into the cache at $10 per million, $2.65, and every later request reads them at $0.50 per million, $0.13. `/compact` reads the cold conversation once at the input price, $5 per million, plus a 10k summary at the output price: $1.58; then each request carries about 90k — the fixed part plus what Claude Code puts back — for $0.05. `/clear` carries the fixed part alone.
+Reading a row: continuing writes the 265,000 tokens back into the cache, and every later request reads them back from it. `/compact` reads the cold conversation once at the input price and writes a 10,000-token summary as output; then each request carries about 90,000 — the fixed part plus what Claude Code puts back after a compaction. `/clear` carries the fixed part alone.
 
 The blocked prompt is written to Claude Code's prompt history as well, so `↑` finds it even when Claude Code dropped it.
 

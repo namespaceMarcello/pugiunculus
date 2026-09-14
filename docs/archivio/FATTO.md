@@ -227,3 +227,10 @@ family in the hook), the conversation's size in tokens said once above it.
 Before, the cells were input-token equivalents and read as token counts. The
 blocked prompt is appended to `~/.claude/history.jsonl` so ↑ brings it back.
 Try it: `PUGI_COLD_MINUTES=0` in a session, a second prompt shows the table.
+
+### 2026-09-14 — the table says the tokens and their kind, then the dollars
+
+Each cell of the cold-cache table: how many tokens and of what kind (cache
+write, cache read, input plus output), the dollars at list price and the
+saving in parentheses; above it the model found in the transcript, named,
+and the four prices used. Try it: `PUGI_COLD_MINUTES=0`, a second prompt.
