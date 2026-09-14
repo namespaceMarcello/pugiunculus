@@ -56,6 +56,12 @@ const ENTRIES = [
     file: 'pugi-cold.cjs',
     what: 'blocks the first prompt after the cache went cold, once, and prices /compact and /clear against it',
   },
+  {
+    event: 'PreToolUse',
+    matcher: 'Task|Agent',
+    file: 'pugi-model.cjs',
+    what: 'blocks a subagent launched without a model, once, and asks for one',
+  },
 ]
 
 // The effort router: one hook on the prompt, which writes a suggestion next to
@@ -76,7 +82,7 @@ const skillFile = (level) => path.join(SKILLS_DIR, 'effort-' + level, 'SKILL.md'
 // earlier versions installed (notebook, recap), so a first run after an update
 // cleans up the old entries and every run after that stays idempotent.
 const commandMatches = (entry, re) => (entry.hooks || []).some((h) => re.test(String(h.command || '')))
-const isOurs = (entry) => commandMatches(entry, /(?:squint|pugi)(?:-agents|-bash|-cold|-notebook|-effort|-recap)?\.cjs/)
+const isOurs = (entry) => commandMatches(entry, /(?:squint|pugi)(?:-agents|-bash|-cold|-model|-notebook|-effort|-recap)?\.cjs/)
 const isEffort = (entry) => commandMatches(entry, /pugi-effort\.cjs/)
 
 // The lean reader: a subagent with three tools and ten lines of instructions,

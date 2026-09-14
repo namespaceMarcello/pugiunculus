@@ -240,3 +240,13 @@ and the four prices used. Try it: `PUGI_COLD_MINUTES=0`, a second prompt.
 One line above the table: how much of the conversation the last request read
 from the cache (its `cache_read_input_tokens` over its context), and that this
 one would read none of it. Try it: `PUGI_COLD_MINUTES=0`, a second prompt.
+
+### 2026-09-14 — the model hook
+
+`hooks/pugi-model.cjs`, on PreToolUse for Agent and Task, installed with the
+blockers: a launch without a model is refused once with the three choices
+(haiku, sonnet, opus) and the orchestrator chooses; the same launch again
+passes, and the log says which model was chosen or that none was. A custom
+agent whose definition names its model passes. `bench/agent-model.cjs`
+matches every subagent to its launching call and prices the ones without a
+model against Sonnet. Four tests. Try it: launch an Agent without `model`.

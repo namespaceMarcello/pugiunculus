@@ -570,6 +570,59 @@ describe('pugi-cold.cjs — the cold cache', () => {
   })
 })
 
+// ----------------------------------------------------------- pugi-model.cjs
+
+describe('pugi-model.cjs — name the model', () => {
+  const MO = 'pugi-model.cjs'
+  const launch = (session, input, extra) => call(MO, { session_id: session, hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: input, cwd: SANDBOX }, extra)
+  const BRIEF = { subagent_type: 'general-purpose', description: 'count the tests', prompt: 'Count the tests in test.cjs and report the number.' }
+
+  test('a launch without a model is refused once with the three choices; the same launch again goes through, with or without one', () => {
+    const s = fresh()
+    const out = launch(s, BRIEF)
+    assert.ok(denied(out))
+    assert.match(reason(out), /No model given: this subagent would inherit the session's model/)
+    assert.match(reason(out), /haiku\s+mechanical, checkable work\n\s+sonnet\s+a closed brief\n\s+opus\s+design, obscure debugging, an invariant\nNever fable\./)
+    assert.equal(launch(s, { ...BRIEF, model: 'sonnet' }), '')
+    assert.deepEqual(decisions(s), ['blocked', 'chosen'])
+    const t = fresh()
+    assert.ok(denied(launch(t, BRIEF)))
+    assert.equal(launch(t, BRIEF), '')
+    assert.deepEqual(decisions(t), ['blocked', 'insisted'])
+  })
+
+  test('a model named from the start passes as "given"; a different brief is judged on its own', () => {
+    const s = fresh()
+    assert.equal(launch(s, { ...BRIEF, model: 'haiku' }), '')
+    assert.ok(denied(launch(s, { ...BRIEF, prompt: 'Another brief entirely.' })))
+    assert.deepEqual(decisions(s), ['given', 'blocked'])
+  })
+
+  test('a custom agent whose definition names its model, and a plugin agent, pass', () => {
+    const s = fresh()
+    const AGENTS = path.join(HOME, '.claude', 'agents')
+    fs.mkdirSync(AGENTS, { recursive: true })
+    fs.writeFileSync(path.join(AGENTS, 'reader.md'), '---\nname: reader\ndescription: reads\nmodel: sonnet\n---\nRead things.\n')
+    assert.equal(launch(s, { ...BRIEF, subagent_type: 'reader' }), '')
+    assert.equal(launch(s, { ...BRIEF, subagent_type: 'some-plugin:agent' }), '')
+    fs.unlinkSync(path.join(AGENTS, 'reader.md'))
+    assert.ok(denied(launch(s, { ...BRIEF, subagent_type: 'reader' })))
+    assert.deepEqual(decisions(s), ['defined', 'plugin', 'blocked'])
+  })
+
+  test('a wave launched at once is refused together; other tools, the OFF switches and a broken event pass', async () => {
+    const s = fresh()
+    const wave = [1, 2, 3].map((i) => ({ session_id: s, hook_event_name: 'PreToolUse', tool_name: 'Agent', tool_input: { ...BRIEF, prompt: 'Brief number ' + i } }))
+    const outs = await callAll(MO, wave)
+    assert.equal(outs.filter(denied).length, 3)
+    assert.equal(call(MO, { session_id: s, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: SMALL } }), '')
+    assert.equal(launch(s, { ...BRIEF, prompt: 'Brief number 4' }, { PUGI_OFF: '1' }), '')
+    assert.equal(launch(s, { ...BRIEF, prompt: 'Brief number 5' }, { PUGI_MODEL_OFF: '1' }), '')
+    assert.deepEqual(decisions(s).slice(3), ['off', 'off'])
+    assert.equal(call(MO, { session_id: s }), '')
+  })
+})
+
 describe('install.cjs', () => {
   const SETTINGS = path.join(HOME, '.claude', 'settings.json')
   const install = (...args) => spawnSync(process.execPath, [path.join(__dirname, 'install.cjs'), ...args], { encoding: 'utf8', env: env() })
@@ -591,6 +644,7 @@ describe('install.cjs', () => {
     install('--effort')
     assert.equal(count(/pugi-effort/), 1)
     assert.equal(count(/pugi-cold/), 1) // the cold-cache hook comes with the blockers
+    assert.equal(count(/pugi-model/), 1) // so does the model hook
     assert.ok(!fs.existsSync(path.join(SKILLS, 'effort-max')))
     for (const l of ['medium', 'xhigh']) assert.ok(!fs.existsSync(path.join(SKILLS, 'effort-' + l)))
     assert.equal(fs.readFileSync(path.join(SKILLS, 'effort-low', 'SKILL.md'), 'utf8'), theirs)

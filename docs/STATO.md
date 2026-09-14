@@ -99,6 +99,16 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
   wears as much as one big one. Its effect is the log's blocked-to-insisted
   ratio, read after a week.
 
+- **The model hook ships on, with the blockers** (2026-09-14). A subagent launched
+  without a model inherits the session's. On the transcripts (`bench/agent-model.cjs`,
+  30 days): 308 launches matched, 76 without a model, 64 on Opus and 11 on Fable,
+  $647 at list price against $242 on Sonnet; median 33 requests each, so real
+  work, not reads. The hook refuses once with the three choices and lets the
+  orchestrator choose; the same launch again passes. It writes no model itself:
+  the user chose the refusal over a silent `model: sonnet`, so the choice, and
+  whether it is Opus again, stays in the log. In the last 7 days only 1 launch
+  lacked a model: the rule in CLAUDE.md took hold after 2026-09-11.
+
 ## Known problems
 
 - None open.
@@ -150,6 +160,10 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
   cost within 2%. The hour is the default on a subscription but drops to five
   minutes on usage credits, and 13% of the last 30 days' cache writes were at
   five minutes. Candidate for the installer: `promptCacheTtl: "1h"`, one line.
+
+- After a week with the model hook on (2026-09-14): `node bench/agent-model.cjs`
+  for what was chosen after a refusal. If it is Opus every time, the refusal
+  is a round trip for nothing and goes.
 
 - After a week with the cold-cache hook on (2026-09-14): `node bench/cold.cjs`
   for blocked against insisted, and whether the returns that compacted cost

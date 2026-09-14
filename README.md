@@ -2,14 +2,15 @@
 
 **Your coding agent opens an 84 KB file to read ten lines. Then carries 12,000 tokens of it for the rest of the session.**
 
-Pugiunculus is four hooks that stop the ways a coding agent burns tokens on nothing:
+Pugiunculus is five hooks that stop the ways a coding agent burns tokens on nothing:
 
 - **opening a whole file** to read ten lines — 11,747 tokens where 614 would do
 - **`cat BIG` instead** — the same waste through the shell, which is where most of it actually happens
 - **spawning ten small subagents** where two would do — each pays a fixed entry cost before doing any work
 - **the first prompt after an hour away** — the cache is cold, and "commit" rewrites 265k tokens at twice the input price
+- **a subagent launched without a model** — it inherits the session's, the dearest one; 76 of those in 30 days, $647 where Sonnet would have been $242
 
-The first two and the last refuse once and explain the cost; if you or the agent really need it, the same request again goes through. The third refuses until the prompts change, because refusing once was measured to change nothing — its section says so, with numbers.
+All but the third refuse once and explain the cost; if you or the agent really need it, the same request again goes through. The third refuses until the prompts change, because refusing once was measured to change nothing — its section says so, with numbers.
 
 ```bash
 git clone https://github.com/namespaceMarcello/pugiunculus && node pugiunculus/install.cjs
@@ -142,11 +143,30 @@ Reading a row: continuing writes the 265,000 tokens back into the cache, and eve
 
 The blocked prompt is written to Claude Code's prompt history as well, so `↑` finds it even when Claude Code dropped it.
 
+## Name the model
+
+A subagent launched without a `model` inherits the session's. On the logs this was built from, 30 days: 308 launches matched to the call that made them, 76 without a model — 64 ran on Opus, 11 on Fable — for $647 at list price, a median of 33 requests each. The same requests on Sonnet: $242. The rule was written in the CLAUDE.md (Haiku for mechanical, checkable work; Sonnet for a closed brief; Opus for design and obscure debugging) and skipped one launch in four.
+
+The fifth hook refuses a launch without a model once and shows the three choices. The orchestrator chooses. The same launch again — same brief, same type — goes through with or without a model, and the log says which: `chosen` with the model, or `insisted`. A custom agent whose definition names its model passes; so does a plugin's agent. The hook never writes a model into the call.
+
+```
+  Agent(subagent_type: "general-purpose", prompt: "Count the tests in test.cjs …")
+  ✗ No model given: this subagent would inherit the session's model (claude-opus-5),
+    the dearest one. Relaunch it with one:
+      haiku   mechanical, checkable work
+      sonnet  a closed brief
+      opus    design, obscure debugging, an invariant
+    Never fable. The same launch again, still without a model, goes through.
+```
+
+What it is worth is what gets chosen, and that is in the log: `node bench/agent-model.cjs` prints the launches without a model and their cost on what they inherited against Sonnet — a ceiling — and how often the hook refused, what was chosen after, how often nothing was.
+
 On the logs this was built from, 7 days: 15 returns after more than an hour, and the rewrites alone were 13% of everything the week cost. What followed those returns was 60% of the week; replayed with a `/compact` at each return it would have cost 25% less. Over 30 days: 6% and 13%. That is a ceiling — it assumes you compact every time — and the hook's log says how often you did:
 
 ```bash
 node bench/cold.cjs             # your own returns after an hour: as it went, with /compact first, with /clear
 node bench/cold.cjs --days 30
+node bench/agent-model.cjs      # your subagents launched without a model: what they cost on what they inherited, against Sonnet; what the hook got chosen
 ```
 
 It follows `promptCacheTtl` in your settings (5 minutes when set to `5m`), and `PUGI_COLD_MINUTES` overrides it.
@@ -362,7 +382,7 @@ Reproducible, because a number you can't reproduce is a marketing claim.
 | `PUGI_FANOUT_ESCAPE=1` | offer `[separate context]` as a way through the fan-out refusal — off by default, Sonnet used it as a bypass 4 times out of 5 |
 | `PUGI_COLD_MINUTES` | minutes of idle after which the cache counts as cold (default `60`, or `5` when `promptCacheTtl` is `5m`) |
 | `PUGI_OFF=1` | disable every block, keep the log — for your own A/B |
-| `PUGI_READ_OFF=1` · `PUGI_BASH_OFF=1` · `PUGI_FANOUT_OFF=1` · `PUGI_COLD_OFF=1` | disable one hook only, so a control group differs in one thing |
+| `PUGI_READ_OFF=1` · `PUGI_BASH_OFF=1` · `PUGI_FANOUT_OFF=1` · `PUGI_COLD_OFF=1` · `PUGI_MODEL_OFF=1` | disable one hook only, so a control group differs in one thing |
 | `~/.claude/pugi/OFF` | same, as a file — subagents do not inherit your shell, so this is the one that gives you a real control group |
 | `PUGI_LOG=0` | turn the log off entirely |
 
@@ -378,7 +398,7 @@ Why 8 KB: swept 4 / 8 / 16 / 32 / 64 KB over 607 real sessions. 8 KB keeps 91% o
 
 ## What this is not
 
-It is not a framework or a memory system. It is four hooks that stop four specific wastes, one that writes an effort number next to each prompt, and a lean reader agent — plus the measurement tools, so you can check whether any of it moved the number on *your* machine.
+It is not a framework or a memory system. It is five hooks that stop five specific wastes, one that writes an effort number next to each prompt, and a lean reader agent — plus the measurement tools, so you can check whether any of it moved the number on *your* machine.
 
 If the number doesn't move for you, uninstall it. That's what the measurement is for.
 
