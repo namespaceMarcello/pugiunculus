@@ -115,6 +115,22 @@ defect closed is deleted. What happened lives in `docs/archivio/FATTO.md`.
 
 ## Next steps
 
+- **The running total in the refusal (`PUGI_RUNNING_TOTAL`, off) needs its
+  number, and it is the insist rate.** Today a block is undone by an insist
+  **24.5%** of the time (535 blocks over 7 days: 404 held, 131 undone; `.ts`
+  21%, `.md` 40%, and 86 of the 90 `.md` blocks are two documents of
+  kittencare). The line costs ~15 tokens a block, ~6k a week against 2.44M
+  saved, so the cost is not the question — whether an agent that sees what it
+  is accumulating insists less is. No paid bench needed: the log records
+  `held` on every block, so the two arms separate themselves over a few days
+  of ordinary use. If the rate does not move, the line goes, like the status
+  line before it.
+
+- Exempting `.md` from the read block was asked for and refused on the
+  numbers: 60% of `.md` blocks hold and are worth 328k tokens, against 3k
+  spent on the refusals that fail. `measure.cjs` puts break-even at 1.4%.
+  The threshold (`--sweep`) is the lever there, not the extension.
+
 - The fixed block (`--fixed`, 14% of what a request re-reads, ~56k per
   request): the part the user controls is ~9k — 64 skills listed (7k, 5.4k of
   it for 50 never used), 7 agent types, 7 MCP servers. Switching every unused

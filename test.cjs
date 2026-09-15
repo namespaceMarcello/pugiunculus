@@ -98,6 +98,28 @@ describe('pugi.cjs — whole-file Read', () => {
     assert.deepEqual(decisions(s), ['blocked', 'insisted'])
   })
 
+  test('the running total is opt-in, counts only settled blocks, and an insist takes one back', () => {
+    const OTHER = path.join(SANDBOX, 'other.ts').split('\\').join('/')
+    fs.writeFileSync(OTHER, 'const y = 2\n'.repeat(3000)) // ~36 KB, like BIG
+
+    // Off by default: the refusal says nothing about a total.
+    const quiet = fresh()
+    assert.doesNotMatch(reason(read(quiet, { file_path: BIG })), /held/)
+
+    const s = fresh()
+    const on = { PUGI_RUNNING_TOTAL: '1' }
+    // The first block has nothing settled behind it yet.
+    assert.doesNotMatch(reason(read(s, { file_path: BIG }, on)), /held/)
+    // The second one can speak for the first: ~36 KB is ~9k tokens.
+    assert.match(reason(read(s, { file_path: OTHER }, on)), /1 block held, about 9k tokens/)
+
+    // BIG is insisted on, so it stops counting; only OTHER is left.
+    assert.equal(read(s, { file_path: BIG }, on), '')
+    const THIRD = path.join(SANDBOX, 'third.ts').split('\\').join('/')
+    fs.writeFileSync(THIRD, 'const z = 3\n'.repeat(3000))
+    assert.match(reason(read(s, { file_path: THIRD }, on)), /1 block held, about 9k tokens/)
+  })
+
   test('lets slices, small files, opaque files and missing files through', () => {
     const s = fresh()
     assert.equal(read(s, { file_path: BIG, offset: 100, limit: 30 }), '')

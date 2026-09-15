@@ -257,3 +257,14 @@ model against Sonnet. Four tests. Try it: launch an Agent without `model`.
 the convention says, not whenever the variable exists: a Haiku subagent
 running `node test.cjs` had it set empty and saw the colour test fail.
 Try it: `NO_COLOR=1 node test.cjs` and `node test.cjs`, 47 each.
+
+### 2026-09-15 — the running total in the refusal
+
+`pugi.cjs` can close its refusal with what the session has already saved:
+*"So far this session 1 block held, about 10k tokens you did not have to
+carry."* Only settled blocks count — the one being refused could still be
+insisted on, and an insist takes its own back out of the total. Each block
+is capped at 11,750 tokens, since Read stops at ~47,000 characters. Off by
+default behind `PUGI_RUNNING_TOTAL=1`, and the log carries `held` so the
+arms separate themselves. One test, 48. Try it:
+`PUGI_RUNNING_TOTAL=1`, then two whole-file Reads on different files.

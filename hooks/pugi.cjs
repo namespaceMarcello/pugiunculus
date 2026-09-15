@@ -14,6 +14,9 @@
  *   PUGI_LOG                 default "1"   — "0" disables the decision log
  *   PUGI_OFF                 default unset — set to "1" to disable (for A/B tests)
  *   PUGI_READ_OFF            default unset — "1" disables only this hook
+ *   PUGI_RUNNING_TOTAL       default unset — "1" adds the session's running total
+ *                                            to the refusal. Off until a number says
+ *                                            it lowers the insist rate.
  *
  * A file at ~/.claude/pugi/OFF disables it too. Use that one when you want a
  * control group across subagents, which do not inherit your shell environment.
@@ -28,6 +31,9 @@ const os = require('node:os')
 
 const THRESHOLD = Number(process.env.PUGI_THRESHOLD_BYTES) || 8000
 const LOGGING = process.env.PUGI_LOG !== '0'
+const RUNNING_TOTAL = process.env.PUGI_RUNNING_TOTAL === '1'
+/** Read stops at ~47,000 characters, so no single block is worth more than this. */
+const READ_CAP = 11750
 const HOME = os.homedir()
 const DIR = path.join(HOME, '.claude', 'pugi')
 const LOG = path.join(DIR, 'log.jsonl')
@@ -116,9 +122,14 @@ function run(ev) {
   }
   state.blocked = state.blocked || {}
 
+  const worth = Math.min(Math.ceil(stat.size / 4), READ_CAP)
+
   // Second attempt on the same file: the agent means it. Let it through.
   if ((state.blocked[key] || 0) >= 1) {
     state.blocked[key] = 0
+    // The earlier block did not hold, so it leaves the running total with it.
+    state.held = Math.max(0, (state.held || 0) - 1)
+    state.heldTokens = Math.max(0, (state.heldTokens || 0) - worth)
     try {
       fs.writeFileSync(stateFile, JSON.stringify(state))
     } catch {}
@@ -127,10 +138,15 @@ function run(ev) {
   }
 
   state.blocked[key] = 1
+  // Only blocks already settled are counted: this one could still be insisted on.
+  const held = state.held || 0
+  const heldTokens = state.heldTokens || 0
+  state.held = held + 1
+  state.heldTokens = heldTokens + worth
   try {
     fs.writeFileSync(stateFile, JSON.stringify(state))
   } catch {}
-  note({ ...base, decision: 'blocked', bytes: stat.size })
+  note({ ...base, decision: 'blocked', bytes: stat.size, held: RUNNING_TOTAL ? held : null })
 
   const tokens = Math.ceil(stat.size / 4)
   exit({
@@ -141,6 +157,10 @@ function run(ev) {
         `Whole-file Read blocked: up to ~${tokens} tokens for one file. ` +
         `Find the line with Grep first, then Read with offset/limit around it. ` +
         `If you genuinely need the entire file, repeat this exact Read and it will go through.` +
+        (RUNNING_TOTAL && held > 0
+          ? ` So far this session ${held} block${held === 1 ? '' : 's'} held, ` +
+            `about ${Math.round(heldTokens / 1000)}k tokens you did not have to carry.`
+          : '') +
         (fs.existsSync(path.join(HOME, '.claude', 'agents', 'lettore.md'))
           ? ' For an exploration across several files, hand it to the lettore agent: it reads in its own context and returns only what you asked.'
           : ''),
